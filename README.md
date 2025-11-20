@@ -57,7 +57,7 @@ meera/
 
 ## Dependencies (installed by the run_meera.sh script) 
 
-Before running Meera, you must install:
+Before running Meera, you must install (these are installed by the run_meera.sh script for ubuntu and fedora):
 
 - **Python 3.10+**
 - **GTK4**
