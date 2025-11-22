@@ -1,16 +1,23 @@
 import requests
 import json
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "llama3.2:1b"  # tiny, CPU-friendly model
 
-def stream_llm(prompt: str, model: str = MODEL_NAME):
+def stream_llm(messages: list, model: str = MODEL_NAME):
     """
     Generator that yields small chunks of text from the model as they arrive.
+    
+    Args:
+        messages: List of message dicts with 'role' ('user' or 'assistant') and 'content'
+        model: Model name to use
+    
+    Yields:
+        Chunks of text as they arrive from the model
     """
     payload = {
         "model": model,
-        "prompt": prompt,
+        "messages": messages,
         "options": {
             "num_predict": 128,
             "num_ctx": 1024,
@@ -28,8 +35,8 @@ def stream_llm(prompt: str, model: str = MODEL_NAME):
             packet = json.loads(line.decode())
 
             # Normal streaming token
-            if "response" in packet:
-                chunk = packet["response"]
+            if "message" in packet and "content" in packet["message"]:
+                chunk = packet["message"]["content"]
                 if chunk:
                     yield chunk
 
