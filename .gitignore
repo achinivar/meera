@@ -3,7 +3,9 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+venv/
 env/
 build/
 dist/
 BACKUPS/
+run_local.sh

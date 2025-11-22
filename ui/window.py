@@ -16,6 +16,9 @@ class MeeraWindow(Gtk.Window):
         # State for streaming
         self.is_streaming = False
         self.cancel_stream = False
+        
+        # Conversation history for context
+        self.conversation_history = []
 
         # ---------- CSS (for bubbles & transparent chat bg) ----------
         import os
@@ -258,6 +261,9 @@ class MeeraWindow(Gtk.Window):
         self._append_message_line("You", prompt)
         self.input_buf.set_text("")
 
+        # Add user message to conversation history
+        self.conversation_history.append({"role": "user", "content": prompt})
+
         self.is_streaming = True
         self.cancel_stream = False
         self._set_button_state(True)
@@ -266,17 +272,23 @@ class MeeraWindow(Gtk.Window):
 
         thread = threading.Thread(
             target=self._stream_reply_worker,
-            args=(prompt,),
             daemon=True,
         )
         thread.start()
 
-    def _stream_reply_worker(self, prompt: str):
+    def _stream_reply_worker(self):
         try:
-            for chunk in stream_llm(prompt):
+            # Collect the full response for conversation history
+            full_response = ""
+            for chunk in stream_llm(self.conversation_history):
                 if self.cancel_stream:
                     break
+                full_response += chunk
                 GLib.idle_add(self._append_text, chunk)
+            
+            # Add assistant response to conversation history if not cancelled
+            if not self.cancel_stream and full_response:
+                self.conversation_history.append({"role": "assistant", "content": full_response})
         finally:
             GLib.idle_add(self._stream_finished)
 
