@@ -15,9 +15,9 @@ It runs a small language model via [Ollama](https://ollama.com/) and presents a 
 - 📜 View and load previous chat sessions from menu
 - 🆕 New Chat option to start fresh conversations
 - 🎛️ Menu bar in titlebar with About dialog
-- 🌓 Works in both light/dark themes (text forced to white)
+- 🌓 Automatic theme detection (adapts to light/dark system theme)
 - 🐶 Custom background image for the chat area
-- ↔️ Right-aligned bubbles for user messages, left-aligned for Meera
+- ↔️ Right-aligned user messages, left-aligned for Meera
 - ⏹ "Stop" button while Meera is typing, ↑ send button when idle
 - ⇧⏎ Multi-line input with auto-grow from 1–6 lines
 

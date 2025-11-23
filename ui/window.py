@@ -5,6 +5,14 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Gio", "2.0")
 from gi.repository import Gtk, GLib, Gdk, Pango, Gio  # type: ignore
 
+# Try to import Adw for theme detection
+try:
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw
+    ADW_AVAILABLE = True
+except (ValueError, ImportError):
+    ADW_AVAILABLE = False
+
 import threading
 from backend import stream_llm
 from history import save_session, list_sessions, load_session
@@ -28,25 +36,15 @@ class MeeraWindow(Gtk.Window):
             "content": "You are Meera, an AI Puppy for Prism OS. You are helpful, playful, and designed to assist users with their tasks and questions, specific to Prism OS, software recommendations, configuring settings and debugging issues. You are also brief and to the point in your responses. If you are uncertain about an answer or don't have enough information, you must state that in your response."
         }
 
+        # Detect theme and set up styling
+        self.is_dark_theme = self._detect_theme()
+        
         # ---------- CSS (for bubbles & transparent chat bg) ----------
         import os
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         bg_path = os.path.join(base_dir, "assets", "meera_bg.png")
 
-        css = """
-        .meera-chat-view,
-        .meera-input-view,
-        .meera-scroll {
-            background-color: rgba(20,20,20,0.7);
-        }
-        """
-        provider = Gtk.CssProvider()
-        provider.load_from_data(css.encode("utf-8"))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
+        self._setup_theme_styling()
 
         # ---------- HEADER BAR (Titlebar) ----------
         header_bar = Gtk.HeaderBar()
@@ -122,24 +120,8 @@ class MeeraWindow(Gtk.Window):
         self.chat_view.add_css_class("meera-chat-view")
         self.chat_buf = self.chat_view.get_buffer()
 
-        # tag to force white text in chat
-        self.white_tag = self.chat_buf.create_tag(
-            "white_fg",
-            foreground="#ffffff",
-        )
-
-        # Tag for right-aligned user bubble
-        self.user_tag = self.chat_buf.create_tag(
-            "user_right",
-            justification=Gtk.Justification.RIGHT,
-            background="#293548",
-            foreground="#ffffff",
-            left_margin=40,
-            right_margin=4,
-            pixels_above_lines=4,
-            pixels_below_lines=4,
-            pixels_inside_wrap=6,
-        )
+        # Create theme-aware text tags
+        self._create_text_tags()
 
         # Overlay ONLY for the chat area
         chat_overlay = Gtk.Overlay()
@@ -167,11 +149,8 @@ class MeeraWindow(Gtk.Window):
         self.input_view.add_css_class("meera-input-view")
         self.input_buf = self.input_view.get_buffer()
 
-        # tag to force white text in the input box
-        self.input_white_tag = self.input_buf.create_tag(
-            "white_input",
-            foreground="#ffffff",
-        )
+        # Create theme-aware input text tag
+        self._create_input_text_tag()
 
         # Auto-grow height based on content (1–6 lines)
         self.input_buf.connect("changed", self._on_input_changed)
@@ -206,6 +185,121 @@ class MeeraWindow(Gtk.Window):
         # Initial greeting after UI is ready
         GLib.idle_add(self._initial_greeting)
 
+    # ---------- theme detection and styling ----------
+    
+    def _detect_theme(self) -> bool:
+        """Detect if the system is using dark theme. Returns True for dark, False for light."""
+        # Try using Adw StyleManager if available (most reliable)
+        if ADW_AVAILABLE:
+            try:
+                style_manager = Adw.StyleManager.get_default()
+                color_scheme = style_manager.get_color_scheme()
+                if color_scheme == Adw.ColorScheme.FORCE_DARK:
+                    return True
+                elif color_scheme == Adw.ColorScheme.FORCE_LIGHT:
+                    return False
+                # PREFER_DARK or DEFAULT - check system preference
+                return style_manager.get_dark()
+            except:
+                pass
+        
+        # Fallback: Check GTK settings
+        try:
+            settings = Gtk.Settings.get_default()
+            if settings:
+                prefer_dark = settings.get_property("gtk-application-prefer-dark-theme")
+                return prefer_dark
+        except:
+            pass
+        
+        # Default to dark theme if detection fails
+        return True
+    
+    def _setup_theme_styling(self):
+        """Set up CSS styling based on current theme."""
+        if self.is_dark_theme:
+            # Dark theme: dark background with white text
+            css = """
+            .meera-chat-view,
+            .meera-input-view,
+            .meera-scroll {
+                background-color: rgba(20,20,20,0.7);
+            }
+            """
+        else:
+            # Light theme: light background
+            css = """
+            .meera-chat-view,
+            .meera-input-view,
+            .meera-scroll {
+                background-color: rgba(230,230,230,0.75);
+            }
+            """
+        
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+    
+    def _create_text_tags(self):
+        """Create text tags for chat view based on current theme."""
+        if self.is_dark_theme:
+            # Dark theme: white text
+            self.text_tag = self.chat_buf.create_tag(
+                "text_fg",
+                foreground="#ffffff",
+            )
+            # Bold tag for sender names
+            self.bold_tag = self.chat_buf.create_tag(
+                "bold_fg",
+                foreground="#ffffff",
+                weight=Pango.Weight.BOLD,
+            )
+            # Right alignment tag for user messages
+            self.user_right_tag = self.chat_buf.create_tag(
+                "user_right",
+                justification=Gtk.Justification.RIGHT,
+            )
+        else:
+            # Light theme: black text
+            self.text_tag = self.chat_buf.create_tag(
+                "text_fg",
+                foreground="#000000",
+            )
+            # Bold tag for sender names
+            self.bold_tag = self.chat_buf.create_tag(
+                "bold_fg",
+                foreground="#000000",
+                weight=Pango.Weight.BOLD,
+            )
+            # Right alignment tag for user messages
+            self.user_right_tag = self.chat_buf.create_tag(
+                "user_right",
+                justification=Gtk.Justification.RIGHT,
+            )
+        # Keep white_tag as alias for backward compatibility
+        self.white_tag = self.text_tag
+    
+    def _create_input_text_tag(self):
+        """Create text tag for input view based on current theme."""
+        if self.is_dark_theme:
+            # Dark theme: white text
+            self.input_text_tag = self.input_buf.create_tag(
+                "input_fg",
+                foreground="#ffffff",
+            )
+        else:
+            # Light theme: black text
+            self.input_text_tag = self.input_buf.create_tag(
+                "input_fg",
+                foreground="#000000",
+            )
+        # Keep input_white_tag as alias for backward compatibility
+        self.input_white_tag = self.input_text_tag
+
     # ---------- helper methods ----------
 
     def _append_text(self, text: str):
@@ -220,10 +314,10 @@ class MeeraWindow(Gtk.Window):
         # Record where this chunk ends
         end_offset = buf.get_char_count()
 
-        # Apply white text tag just to this new chunk
+        # Apply theme-aware text tag just to this new chunk
         start_iter = buf.get_iter_at_offset(start_offset)
         end_iter = buf.get_iter_at_offset(end_offset)
-        buf.apply_tag(self.white_tag, start_iter, end_iter)
+        buf.apply_tag(self.text_tag, start_iter, end_iter)
 
         # Scroll to bottom
         mark = buf.create_mark(None, buf.get_end_iter(), False)
@@ -241,12 +335,17 @@ class MeeraWindow(Gtk.Window):
         start_iter = buf.get_iter_at_offset(start_offset)
         end_iter = buf.get_iter_at_offset(end_offset)
     
-        # 🔹 Make everything white
-        buf.apply_tag(self.white_tag, start_iter, end_iter)
+        # Apply theme-aware text color to entire message
+        buf.apply_tag(self.text_tag, start_iter, end_iter)
     
-        # User bubble styling on top
+        # Make sender name bold (e.g., "Meera: " or "You: ")
+        sender_name_end = start_offset + len(sender) + 2  # +2 for ": "
+        sender_name_end_iter = buf.get_iter_at_offset(sender_name_end)
+        buf.apply_tag(self.bold_tag, start_iter, sender_name_end_iter)
+    
+        # Right align user messages
         if sender == "You":
-            buf.apply_tag(self.user_tag, start_iter, end_iter)
+            buf.apply_tag(self.user_right_tag, start_iter, end_iter)
     
         mark = buf.create_mark(None, buf.get_end_iter(), False)
         self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
@@ -289,10 +388,10 @@ class MeeraWindow(Gtk.Window):
         height = int(line_height * line_count + 8)
         self.input_scroll.set_min_content_height(height)
 
-        # 🔹 ensure input text stays white
+        # Ensure input text uses theme-aware color
         start = buf.get_start_iter()
         end_iter = buf.get_end_iter()
-        buf.apply_tag(self.input_white_tag, start, end_iter)
+        buf.apply_tag(self.input_text_tag, start, end_iter)
 
     # ---------- input handling ----------
 
@@ -329,7 +428,15 @@ class MeeraWindow(Gtk.Window):
         self.cancel_stream = False
         self._set_button_state(True)
 
-        self._append_text("Meera: ")
+        # Add "Meera: " with bold formatting
+        buf = self.chat_buf
+        start_offset = buf.get_char_count()
+        buf.insert(buf.get_end_iter(), "Meera: ")
+        end_offset = buf.get_char_count()
+        start_iter = buf.get_iter_at_offset(start_offset)
+        end_iter = buf.get_iter_at_offset(end_offset)
+        buf.apply_tag(self.text_tag, start_iter, end_iter)
+        buf.apply_tag(self.bold_tag, start_iter, end_iter)
 
         thread = threading.Thread(
             target=self._stream_reply_worker,
@@ -434,15 +541,16 @@ class MeeraWindow(Gtk.Window):
         except (ValueError, TypeError):
             date_str = session.get("timestamp", "Unknown")[:10] if len(session.get("timestamp", "")) >= 10 else "Unknown"
         
-        # Get first user message (up to 30 characters)
-        first_question = "No messages"
+        # Get last user message (up to 30 characters)
+        last_question = "No messages"
         messages = load_session(session["filepath"])
         if messages:
-            for msg in messages:
+            # Iterate in reverse to find the last user message
+            for msg in reversed(messages):
                 if msg.get("role") == "user" and msg.get("content"):
-                    first_question = msg["content"][:30]
-                    if len(msg["content"]) > 30:
-                        first_question += "..."
+                    last_question = msg["content"][:50]
+                    if len(msg["content"]) > 50:
+                        last_question += "..."
                     break
         
         # Create row box
@@ -461,7 +569,7 @@ class MeeraWindow(Gtk.Window):
         date_label.set_halign(Gtk.Align.START)
         info_box.append(date_label)
         
-        question_label = Gtk.Label(label=first_question)
+        question_label = Gtk.Label(label=last_question)
         question_label.add_css_class("dim-label")
         question_label.set_halign(Gtk.Align.START)
         question_label.set_wrap(True)
