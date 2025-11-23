@@ -3,7 +3,7 @@
 Meera is a local-only AI assistant prototype designed for GNOME desktops.  
 It runs a small language model via [Ollama](https://ollama.com/) and presents a native GTK4 chat UI.
 
-> ⚠️ This is an early prototype: it’s a simple chat UI + local LLM, no system actions yet.
+> ⚠️ This is an early prototype: it's a simple chat UI + local LLM, no system actions yet.
 
 ---
 
@@ -11,8 +11,7 @@ It runs a small language model via [Ollama](https://ollama.com/) and presents a 
 
 - 🖥️ Native GTK4 chat window (GNOME-friendly)
 - 💬 Streaming responses (token-by-token, like ChatGPT)
-- 🧠 Conversation context maintained across messages (like `ollama run`)
-- 💾 Chat history storage (last 10 sessions automatically saved)
+- 💾 Chat history storage (last 10 sessions automatically saved in `./history/`)
 - 📜 View and load previous chat sessions from menu
 - 🆕 New Chat option to start fresh conversations
 - 🎛️ Menu bar in titlebar with About dialog
@@ -74,7 +73,7 @@ Before running Meera, you must install (these are installed by the run_meera.sh 
 
 ## Chat History
 
-Meera automatically saves your conversation history when you close the window. The last 10 sessions are stored in `~/.local/share/meera/history/` (or `$XDG_DATA_HOME/meera/history/`). You can:
+Meera automatically saves your conversation history when you close the window. The last 10 sessions are stored in a `history/` directory relative to where you run the application. You can:
 
 - **View saved sessions**: Click the menu button (☰) → "Chat History"
 - **Load a previous session**: Click "Load" on any session in the history dialog

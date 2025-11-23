@@ -8,12 +8,9 @@ MAX_SESSIONS = 10
 
 def get_history_dir():
     """Get the directory where chat history is stored."""
-    # Use XDG data directory if available, otherwise fall back to ~/.local/share/meera
-    data_dir = os.environ.get("XDG_DATA_HOME")
-    if not data_dir:
-        data_dir = os.path.join(os.path.expanduser("~"), ".local", "share")
-    
-    history_dir = os.path.join(data_dir, "meera", "history")
+    # Store history in a 'history' directory relative to where the app is run from
+    current_dir = os.getcwd()
+    history_dir = os.path.join(current_dir, "history")
     os.makedirs(history_dir, exist_ok=True)
     return history_dir
 

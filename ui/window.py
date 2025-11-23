@@ -21,6 +21,12 @@ class MeeraWindow(Gtk.Window):
         
         # Conversation history for context
         self.conversation_history = []
+        
+        # System message to define Meera's identity
+        self.system_message = {
+            "role": "system",
+            "content": "You are Meera, an AI Puppy for Prism OS. You are helpful, playful, and designed to assist users with their tasks and questions, specific to Prism OS, software recommendations, configuring settings and debugging issues. You are also brief and to the point in your responses. If you are uncertain about an answer or don't have enough information, you must state that in your response."
+        }
 
         # ---------- CSS (for bubbles & transparent chat bg) ----------
         import os
@@ -333,9 +339,12 @@ class MeeraWindow(Gtk.Window):
 
     def _stream_reply_worker(self):
         try:
+            # Build messages list with system message prepended
+            messages = [self.system_message] + self.conversation_history
+            
             # Collect the full response for conversation history
             full_response = ""
-            for chunk in stream_llm(self.conversation_history):
+            for chunk in stream_llm(messages):
                 if self.cancel_stream:
                     break
                 full_response += chunk
