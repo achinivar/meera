@@ -1,12 +1,13 @@
 import os
-import gi
+import gi  # type: ignore
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gio", "2.0")
-from gi.repository import Gtk, GLib, Gdk, Pango, Gio
+from gi.repository import Gtk, GLib, Gdk, Pango, Gio  # type: ignore
 
 import threading
 from backend import stream_llm
+from history import save_session, list_sessions, load_session
 
 
 class MeeraWindow(Gtk.Window):
@@ -62,6 +63,22 @@ class MeeraWindow(Gtk.Window):
         menu_box.set_margin_start(6)
         menu_box.set_margin_end(6)
         popover.set_child(menu_box)
+        
+        # New Chat menu item
+        new_chat_item = Gtk.Button(label="New Chat")
+        new_chat_item.connect("clicked", lambda btn: (popover.popdown(), self._on_new_chat_clicked()))
+        new_chat_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(new_chat_item)
+        
+        # Chat History menu item
+        history_item = Gtk.Button(label="Chat History")
+        history_item.connect("clicked", lambda btn: (popover.popdown(), self._on_history_clicked()))
+        history_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(history_item)
+        
+        # Separator
+        separator = Gtk.Separator()
+        menu_box.append(separator)
         
         # About menu item
         about_item = Gtk.Button(label="About Meera")
@@ -177,6 +194,9 @@ class MeeraWindow(Gtk.Window):
 
         vbox.append(input_box)
 
+        # Connect window close event to save history
+        self.connect("close-request", self._on_window_close)
+        
         # Initial greeting after UI is ready
         GLib.idle_add(self._initial_greeting)
 
@@ -336,6 +356,149 @@ class MeeraWindow(Gtk.Window):
 
     # ---------- menu actions ----------
 
+    def _on_new_chat_clicked(self, button=None):
+        """Start a new chat session"""
+        # Clear conversation history
+        self.conversation_history = []
+        
+        # Clear chat view
+        self.chat_buf.set_text("")
+        
+        # Show initial greeting
+        self._initial_greeting()
+
+    def _on_history_clicked(self, button=None):
+        """Show the Chat History dialog"""
+        sessions = list_sessions()
+        
+        history_window = Gtk.Window()
+        history_window.set_title("Chat History")
+        history_window.set_default_size(500, 400)
+        history_window.set_modal(True)
+        history_window.set_transient_for(self)
+        
+        # Main container
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        history_window.set_child(vbox)
+        
+        if not sessions:
+            # No sessions message
+            no_sessions_label = Gtk.Label(label="No saved sessions yet.")
+            no_sessions_label.set_margin_top(20)
+            vbox.append(no_sessions_label)
+        else:
+            # Scrolled window for session list
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_vexpand(True)
+            scroll.set_min_content_height(250)
+            vbox.append(scroll)
+            
+            # List box for sessions
+            list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            scroll.set_child(list_box)
+            
+            # Add each session
+            for session in sessions:
+                session_row = self._create_session_row(session, history_window)
+                list_box.append(session_row)
+        
+        # Close button
+        close_button = Gtk.Button(label="Close")
+        close_button.set_margin_top(20)
+        close_button.connect("clicked", lambda btn: history_window.close())
+        vbox.append(close_button)
+        
+        history_window.present()
+    
+    def _create_session_row(self, session, history_window):
+        """Create a row widget for a session"""
+        from datetime import datetime
+        
+        # Parse timestamp for display (date only)
+        try:
+            dt = datetime.fromisoformat(session["timestamp"])
+            date_str = dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            date_str = session.get("timestamp", "Unknown")[:10] if len(session.get("timestamp", "")) >= 10 else "Unknown"
+        
+        # Get first user message (up to 30 characters)
+        first_question = "No messages"
+        messages = load_session(session["filepath"])
+        if messages:
+            for msg in messages:
+                if msg.get("role") == "user" and msg.get("content"):
+                    first_question = msg["content"][:30]
+                    if len(msg["content"]) > 30:
+                        first_question += "..."
+                    break
+        
+        # Create row box
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row_box.set_margin_start(6)
+        row_box.set_margin_end(6)
+        row_box.set_margin_top(6)
+        row_box.set_margin_bottom(6)
+        
+        # Session info
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        info_box.set_hexpand(True)
+        info_box.set_halign(Gtk.Align.START)
+        
+        date_label = Gtk.Label(label=date_str)
+        date_label.set_halign(Gtk.Align.START)
+        info_box.append(date_label)
+        
+        question_label = Gtk.Label(label=first_question)
+        question_label.add_css_class("dim-label")
+        question_label.set_halign(Gtk.Align.START)
+        question_label.set_wrap(True)
+        info_box.append(question_label)
+        
+        row_box.append(info_box)
+        
+        # Load button
+        load_button = Gtk.Button(label="Load")
+        load_button.connect("clicked", lambda btn: self._load_session(session["filepath"], history_window))
+        row_box.append(load_button)
+        
+        return row_box
+    
+    def _load_session(self, filepath, history_window):
+        """Load a session into the current conversation"""
+        messages = load_session(filepath)
+        if messages:
+            # Replace current conversation history
+            self.conversation_history = messages
+            
+            # Clear chat view
+            self.chat_buf.set_text("")
+            
+            # Display loaded messages
+            for msg in messages:
+                if msg["role"] == "user":
+                    self._append_message_line("You", msg["content"])
+                elif msg["role"] == "assistant":
+                    self._append_message_line("Meera", msg["content"])
+            
+            # Close history window
+            history_window.close()
+        else:
+            # Show error dialog
+            error_dialog = Gtk.MessageDialog(
+                transient_for=history_window,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Failed to load session"
+            )
+            error_dialog.format_secondary_text("The session file could not be loaded or is corrupted.")
+            error_dialog.run()
+            error_dialog.destroy()
+
     def _on_about_clicked(self, button=None):
         """Show the About dialog"""
         about_window = Gtk.Window()
@@ -375,4 +538,12 @@ class MeeraWindow(Gtk.Window):
         vbox.append(close_button)
 
         about_window.present()
+
+    # ---------- window lifecycle ----------
+
+    def _on_window_close(self, window):
+        """Handle window close event - save conversation history"""
+        if self.conversation_history:
+            save_session(self.conversation_history)
+        return False  # Allow window to close normally
 
