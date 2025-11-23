@@ -12,6 +12,9 @@ It runs a small language model via [Ollama](https://ollama.com/) and presents a 
 - 🖥️ Native GTK4 chat window (GNOME-friendly)
 - 💬 Streaming responses (token-by-token, like ChatGPT)
 - 🧠 Conversation context maintained across messages (like `ollama run`)
+- 💾 Chat history storage (last 10 sessions automatically saved)
+- 📜 View and load previous chat sessions from menu
+- 🆕 New Chat option to start fresh conversations
 - 🎛️ Menu bar in titlebar with About dialog
 - 🌓 Works in both light/dark themes (text forced to white)
 - 🐶 Custom background image for the chat area
@@ -51,6 +54,7 @@ Expected repo layout:
 meera/
 ├── meera.py               # Main application entry
 ├── backend.py             # LLM streaming client (Ollama chat API)
+├── history.py             # Chat history storage and management
 ├── ui/
 │   └── window.py          # GTK4 UI definition with conversation history
 ├── assets/
@@ -67,5 +71,15 @@ Before running Meera, you must install (these are installed by the run_meera.sh 
 - **GObject Introspection**
 - **Cairo + Cairo GObject bindings**
 - **Ollama** (for local LLM inference)
+
+## Chat History
+
+Meera automatically saves your conversation history when you close the window. The last 10 sessions are stored in `~/.local/share/meera/history/` (or `$XDG_DATA_HOME/meera/history/`). You can:
+
+- **View saved sessions**: Click the menu button (☰) → "Chat History"
+- **Load a previous session**: Click "Load" on any session in the history dialog
+- **Start a new chat**: Click the menu button (☰) → "New Chat"
+
+Sessions older than the last 10 are automatically deleted when new ones are saved.
 
 
