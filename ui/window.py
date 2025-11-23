@@ -2,7 +2,8 @@ import os
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gtk, GLib, Gdk, Pango
+gi.require_version("Gio", "2.0")
+from gi.repository import Gtk, GLib, Gdk, Pango, Gio
 
 import threading
 from backend import stream_llm
@@ -39,6 +40,40 @@ class MeeraWindow(Gtk.Window):
             provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
+
+        # ---------- HEADER BAR (Titlebar) ----------
+        header_bar = Gtk.HeaderBar()
+        header_bar.set_show_title_buttons(True)
+        
+        # Menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_icon_name("open-menu-symbolic")
+        menu_button.set_tooltip_text("Menu")
+        
+        # Create popover (using regular Popover instead of PopoverMenu)
+        popover = Gtk.Popover()
+        popover.set_has_arrow(False)
+        menu_button.set_popover(popover)
+        
+        # Create menu box
+        menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        menu_box.set_margin_top(6)
+        menu_box.set_margin_bottom(6)
+        menu_box.set_margin_start(6)
+        menu_box.set_margin_end(6)
+        popover.set_child(menu_box)
+        
+        # About menu item
+        about_item = Gtk.Button(label="About Meera")
+        about_item.connect("clicked", lambda btn: (popover.popdown(), self._on_about_clicked()))
+        about_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(about_item)
+        
+        # Add menu button to header bar (on the left, before title)
+        header_bar.pack_start(menu_button)
+        
+        # Set titlebar after everything is configured
+        self.set_titlebar(header_bar)
 
         # ---------- Root layout (no global background image) ----------
         root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -298,4 +333,46 @@ class MeeraWindow(Gtk.Window):
         self.cancel_stream = False
         self._set_button_state(False)
         return False
+
+    # ---------- menu actions ----------
+
+    def _on_about_clicked(self, button=None):
+        """Show the About dialog"""
+        about_window = Gtk.Window()
+        about_window.set_title("About Meera")
+        about_window.set_default_size(400, 200)
+        about_window.set_modal(True)
+        about_window.set_transient_for(self)
+        about_window.set_resizable(False)
+
+        # Main container
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        about_window.set_child(vbox)
+
+        # Title
+        title_label = Gtk.Label(label="Meera")
+        title_label.add_css_class("title-1")
+        vbox.append(title_label)
+
+        # Description
+        desc_label = Gtk.Label(label="AI companion for Prism OS")
+        desc_label.set_margin_top(10)
+        vbox.append(desc_label)
+
+        # Website button
+        website_button = Gtk.LinkButton(uri="https://github.com/achinivar/meera", label="Website")
+        website_button.set_margin_top(20)
+        vbox.append(website_button)
+
+        # Close button
+        close_button = Gtk.Button(label="Close")
+        close_button.set_margin_top(20)
+        close_button.connect("clicked", lambda btn: about_window.close())
+        vbox.append(close_button)
+
+        about_window.present()
 
