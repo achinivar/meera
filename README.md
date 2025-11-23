@@ -11,6 +11,7 @@ It runs a small language model via [Ollama](https://ollama.com/) and presents a 
 
 - 🖥️ Native GTK4 chat window (GNOME-friendly)
 - 💬 Streaming responses (token-by-token, like ChatGPT)
+- 🧠 Conversation context maintained across messages (like `ollama run`)
 - 🌓 Works in both light/dark themes (text forced to white)
 - 🐶 Custom background image for the chat area
 - ↔️ Right-aligned bubbles for user messages, left-aligned for Meera
@@ -48,9 +49,9 @@ Expected repo layout:
 ```text
 meera/
 ├── meera.py               # Main application entry
-├── backend.py             # LLM streaming client (Ollama)
+├── backend.py             # LLM streaming client (Ollama chat API)
 ├── ui/
-│   └── window.py          # GTK4 UI definition
+│   └── window.py          # GTK4 UI definition with conversation history
 ├── assets/
 │   └── meera_bg.png       # Background image for chat area
 └── run_meera.sh           # Setup + run script
