@@ -2,7 +2,7 @@ import requests
 import json
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL_NAME = "llama3.2:1b"  # tiny, CPU-friendly model
+MODEL_NAME = "qwen3.5:2b-q4_K_M"
 
 def stream_llm(messages: list, model: str = MODEL_NAME):
     """
@@ -23,6 +23,8 @@ def stream_llm(messages: list, model: str = MODEL_NAME):
             "num_ctx": 4096
         },
         "stream": True,
+        # Qwen3 / thinking-capable models: top-level flag for Ollama chat API
+        "think": False,
     }
 
     try:
