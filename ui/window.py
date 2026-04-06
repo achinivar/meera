@@ -14,7 +14,7 @@ except (ValueError, ImportError):
     ADW_AVAILABLE = False
 
 import threading
-from backend import stream_llm
+from inference import stream_llm
 from history import save_session, list_sessions, load_session
 
 

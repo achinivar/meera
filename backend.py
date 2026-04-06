@@ -19,7 +19,7 @@ def stream_llm(messages: list, model: str = MODEL_NAME):
         "model": model,
         "messages": messages,
         "options": {
-            "num_predict": 128,
+            "num_predict": 1024,
             "num_ctx": 4096
         },
         "stream": True,
