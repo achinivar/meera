@@ -37,17 +37,17 @@ if [ "$PKG_MANAGER" = "dnf" ]; then
   section "Installing system dependencies via dnf"
   sudo dnf install -y \
     python3 \
+    python3-requests \
     python3-gobject \
     gtk4 \
     libadwaita \
-    pip \
     gobject-introspection-devel \
     cairo-devel
 elif [ "$PKG_MANAGER" = "apt" ]; then
   section "Installing system dependencies via apt"
   sudo apt-get update
   sudo apt-get install -y \
-    python3 python3-venv python3-gi \
+    python3 python3-requests python3-venv python3-gi \
     gir1.2-gtk-4.0 \
     gir1.2-pango-1.0 \
     libgirepository1.0-dev
@@ -83,19 +83,12 @@ else
 fi
 
 # Pull a small CPU-friendly model (adjust if backend.py uses a different name)
-MODEL_NAME="llama3.2:1b"
+MODEL_NAME="qwen3.5:2b-q4_K_M"
 echo "Ensuring model '$MODEL_NAME' is available..."
 ollama pull "$MODEL_NAME" || true
 
 ########################################
-# 5. Python installs
-########################################
-
-pip install --upgrade pip
-pip install requests
-
-########################################
-# 6. Run Meera
+# 5. Run Meera
 ########################################
 
 section "Launching Meera"
