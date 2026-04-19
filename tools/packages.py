@@ -62,26 +62,18 @@ def _flatpak_list(params: Mapping[str, Any]) -> ToolResult:
     )
 
 
-_DISTRO = ToolParam(
-    name="distro",
-    param_type="string",
-    required=True,
-    description='Must be "ubuntu" or "fedora".',
-)
-
-
 TOOLS: list[ToolSpec] = [
     ToolSpec(
         name="packages_list_updates",
         description="List OS package upgrades (dnf on Fedora, apt on Ubuntu). Read-only.",
-        parameters=[_DISTRO],
+        parameters=[],
         handler=_packages_list_updates,
         read_only=True,
     ),
     ToolSpec(
         name="flatpak_list",
         description="List installed Flatpak applications.",
-        parameters=[_DISTRO],
+        parameters=[],
         handler=_flatpak_list,
         read_only=True,
     ),

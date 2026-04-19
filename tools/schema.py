@@ -5,8 +5,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-TOOLS_SCHEMA_VERSION = 1
-
 
 @dataclass
 class ToolParam:

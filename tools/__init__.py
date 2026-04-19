@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from tools.platform import DistroUnknownError, detect_distro
-from tools.registry import TOOLS, get_tool, tools_manifest_json
+from tools.registry import TOOLS, get_tool, tools_prompt_catalog_json
 from tools.runner import run_tool
 from tools.schema import (
-    TOOLS_SCHEMA_VERSION,
     ToolParam,
     ToolResult,
     ToolSpec,
@@ -15,7 +14,6 @@ from tools.schema import (
 
 __all__ = [
     "TOOLS",
-    "TOOLS_SCHEMA_VERSION",
     "DistroUnknownError",
     "ToolParam",
     "ToolResult",
@@ -25,5 +23,5 @@ __all__ = [
     "run_tool",
     "tool_result_err",
     "tool_result_ok",
-    "tools_manifest_json",
+    "tools_prompt_catalog_json",
 ]

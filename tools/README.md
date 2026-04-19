@@ -4,18 +4,18 @@ Typed, allowlisted actions the assistant may run later (Phase 3). **No raw shell
 
 ## Public API
 
-- `tools.run_tool(name, params)` — validate parameters, resolve/check `distro` against `/etc/os-release`, dispatch handler.
-- `tools.tools_manifest_json()` — compact JSON catalog (no Python `handler` field) for prompts.
+- `tools.run_tool(name, params)` — validate parameters, inject host `distro` from `detect_distro()`, dispatch handler.
+- `tools.tools_prompt_catalog_json()` — JSON tool catalog for system prompts (names, descriptions, parameters only).
 - `tools.TOOLS`, `tools.get_tool(name)` — in-process registry.
 
-## `distro` parameter
+## Host distribution (`distro`)
 
-Every tool schema includes required `distro`: `"ubuntu"` or `"fedora"`. The runner **injects** it from `detect_distro()` when omitted. If the model sends a value that **does not match** the host, the runner returns `DISTRO_MISMATCH` and runs **no** subprocess.
+Do **not** declare `distro` in tool parameter lists. The runner always sets `params["distro"]` from `detect_distro()` before calling handlers (any model-supplied `distro` key is ignored). Handlers may read `params["distro"]` when behavior differs between Ubuntu and Fedora.
 
 ## Adding a tool
 
 1. Implement a handler `def _foo(params: Mapping[str, Any]) -> ToolResult` in the right module (`system.py`, `files.py`, …).
-2. Append a `ToolSpec` to that module’s `TOOLS` list (include `distro` in `parameters`).
+2. Append a `ToolSpec` to that module’s `TOOLS` list (only real arguments — not `distro`).
 3. Import the module from `registry.py` so specs are merged (names must stay unique).
 4. Add a unit test (mock `subprocess.run` via `tools._cmd.run_argv` patches when needed).
 
