@@ -40,14 +40,7 @@ TOOLS: list[ToolSpec] = [
     ToolSpec(
         name="timer_list",
         description="List systemd --user timers.",
-        parameters=[
-            ToolParam(
-                name="distro",
-                param_type="string",
-                required=True,
-                description='Must be "ubuntu" or "fedora".',
-            ),
-        ],
+        parameters=[],
         handler=_timer_list,
         read_only=True,
     ),

@@ -17,6 +17,12 @@ def _coerce_param(spec: ToolSpec, pname: str, raw: Any) -> Any | ToolResult:
     if param is None:
         return tool_result_err(f"Unknown parameter: {pname}", "VALIDATION_ERROR")
 
+    if raw is None:
+        return tool_result_err(
+            f"Parameter {pname!r} must not be null",
+            "VALIDATION_ERROR",
+        )
+
     if param.param_type == "string":
         s = raw if isinstance(raw, str) else str(raw)
         if len(s) > _MAX_STRING_PARAM_LEN:
@@ -60,7 +66,15 @@ def _build_validated_params(spec: ToolSpec, params: Mapping[str, Any]) -> dict[s
 
     for p in spec.parameters:
         if p.name in params:
-            coerced = _coerce_param(spec, p.name, params[p.name])
+            raw_val = params[p.name]
+            # JSON null — optional params treat as absent (defaults apply); never str(None).
+            if raw_val is None and not p.required:
+                if p.default is not None:
+                    out[p.name] = p.default
+                else:
+                    out[p.name] = None
+                continue
+            coerced = _coerce_param(spec, p.name, raw_val)
             if isinstance(coerced, ToolResult):
                 return coerced
             out[p.name] = coerced
@@ -87,24 +101,12 @@ def run_tool(
         return tool_result_err(f"Unknown tool: {name!r}", "UNKNOWN_TOOL")
 
     raw = dict(params or {})
+    raw.pop("distro", None)
 
     try:
         host_distro = detect_distro()
     except DistroUnknownError as e:
         return tool_result_err(str(e), "DISTRO_UNKNOWN")
-
-    if "distro" in raw:
-        d = raw["distro"]
-        if not isinstance(d, str):
-            d = str(d)
-        if d != host_distro:
-            return tool_result_err(
-                f"distro mismatch: params={d!r} host={host_distro!r}",
-                "DISTRO_MISMATCH",
-            )
-        raw["distro"] = d
-    else:
-        raw["distro"] = host_distro
 
     if spec.requires_elevation and not allow_elevation:
         return tool_result_err(
@@ -115,6 +117,8 @@ def run_tool(
     validated = _build_validated_params(spec, raw)
     if isinstance(validated, ToolResult):
         return validated
+
+    validated["distro"] = host_distro
 
     try:
         return spec.handler(validated)

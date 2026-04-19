@@ -60,16 +60,10 @@ TOOLS: list[ToolSpec] = [
         description="List files in a directory under the user's home (non-recursive).",
         parameters=[
             ToolParam(
-                name="distro",
-                param_type="string",
-                required=True,
-                description='Must be "ubuntu" or "fedora".',
-            ),
-            ToolParam(
                 name="path",
                 param_type="string",
                 required=False,
-                description="Directory path; default ~",
+                description="Optional directory under home to list; omit for home (~).",
                 default="~",
             ),
             ToolParam(

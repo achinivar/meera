@@ -1,3 +1,4 @@
+import json
 import os
 import gi  # type: ignore
 gi.require_version("Gtk", "4.0")
@@ -17,6 +18,9 @@ import threading
 from inference import stream_llm
 from history import save_session, list_sessions, load_session
 
+from agent import TOOL_FEEDBACK_PREFIX, agent_tools_enabled, try_parse_tool_call
+from tools.registry import get_tool
+
 
 class MeeraWindow(Gtk.Window):
     def __init__(self):
@@ -29,12 +33,17 @@ class MeeraWindow(Gtk.Window):
         
         # Conversation history for context
         self.conversation_history = []
-        
-        # System message to define Meera's identity
-        self.system_message = {
-            "role": "system",
-            "content": "You are Meera, an AI Puppy for Prism OS. You are helpful, playful, and designed to assist users with their tasks and questions, specific to Prism OS, software recommendations, configuring settings and debugging issues. You are also brief and to the point in your responses. If you are uncertain about an answer or don't have enough information, you must state that in your response."
-        }
+        # Tool JSON for summarize pass only (not stored in conversation_history)
+        self._pending_tool_feedback: str | None = None
+
+        # Base system identity (Phase 3 augments with tools catalog when MEERA_AGENT_TOOLS is on).
+        self._system_identity = (
+            "You are Meera, an AI Puppy for Prism OS. You are helpful, playful, and designed to "
+            "assist users with their tasks and questions, specific to Prism OS, software recommendations, "
+            "configuring settings and debugging issues. You are also brief and to the point in your responses. "
+            "If you are uncertain about an answer or don't have enough information, you must state that in "
+            "your response."
+        )
 
         # Detect theme and set up styling
         self.is_dark_theme = self._detect_theme()
@@ -323,6 +332,11 @@ class MeeraWindow(Gtk.Window):
         mark = buf.create_mark(None, buf.get_end_iter(), False)
         self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
 
+    def _append_tool_running_line(self, tool_name: str):
+        """UI hint while executing a laptop tool (main thread)."""
+        self._append_text(f"\n⟳ Running `{tool_name}`…\n")
+        return False
+
     def _append_message_line(self, sender: str, text: str):
         buf = self.chat_buf
         message = f"{sender}: {text}\n\n"
@@ -423,6 +437,7 @@ class MeeraWindow(Gtk.Window):
 
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": prompt})
+        self._pending_tool_feedback = None
 
         self.is_streaming = True
         self.cancel_stream = False
@@ -445,21 +460,124 @@ class MeeraWindow(Gtk.Window):
         thread.start()
 
     def _stream_reply_worker(self):
+        if agent_tools_enabled():
+            self._stream_reply_worker_agent()
+        else:
+            self._stream_reply_worker_plain()
+
+    def _stream_reply_worker_plain(self):
         try:
-            # Build messages list with system message prepended
-            messages = [self.system_message] + self.conversation_history
-            
-            # Collect the full response for conversation history
+            messages = [{"role": "system", "content": self._system_identity}] + self.conversation_history
+
             full_response = ""
             for chunk in stream_llm(messages):
                 if self.cancel_stream:
                     break
                 full_response += chunk
                 GLib.idle_add(self._append_text, chunk)
-            
-            # Add assistant response to conversation history if not cancelled
+
             if not self.cancel_stream and full_response:
                 self.conversation_history.append({"role": "assistant", "content": full_response})
+        finally:
+            GLib.idle_add(self._stream_finished)
+
+    def _stream_reply_worker_agent(self):
+        """Phase 3: model may emit JSON tool calls; run tools via tools.run_tool and re-prompt."""
+        from agent import (
+            build_summarize_system_message_content,
+            build_system_message_content,
+            format_tool_result_message,
+            max_agent_passes,
+        )
+        from tools.runner import run_tool
+
+        try:
+            max_pass = max_agent_passes()
+            debug_tool_calls = os.environ.get("MEERA_DEBUG_TOOL_CALLS", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+
+            for _ in range(max_pass):
+                if self.cancel_stream:
+                    break
+
+                summarize_mode = self._pending_tool_feedback is not None
+
+                sys_content = (
+                    build_summarize_system_message_content(self._system_identity)
+                    if summarize_mode
+                    else build_system_message_content(self._system_identity)
+                )
+                messages = [{"role": "system", "content": sys_content}] + list(self.conversation_history)
+                if summarize_mode:
+                    feedback_msg = self._pending_tool_feedback
+                    self._pending_tool_feedback = None
+                    messages.append({"role": "user", "content": feedback_msg})
+                    full_response = ""
+                    for chunk in stream_llm(messages):
+                        if self.cancel_stream:
+                            break
+                        full_response += chunk
+                        GLib.idle_add(self._append_text, chunk)
+
+                    if self.cancel_stream:
+                        break
+
+                    if full_response:
+                        self.conversation_history.append(
+                            {"role": "assistant", "content": full_response}
+                        )
+                    break
+
+                buf_chunks: list[str] = []
+                for chunk in stream_llm(messages):
+                    if self.cancel_stream:
+                        break
+                    buf_chunks.append(chunk)
+
+                if self.cancel_stream:
+                    break
+
+                full = "".join(buf_chunks)
+
+                parsed = try_parse_tool_call(full)
+                if parsed is not None and get_tool(parsed["tool"]) is None:
+                    parsed = None
+
+                if parsed is None:
+                    if full:
+                        GLib.idle_add(self._append_text, full)
+                        self.conversation_history.append({"role": "assistant", "content": full})
+                    break
+
+                name = parsed["tool"]
+                params = parsed.get("params") or {}
+
+                if debug_tool_calls:
+                    dbg = (
+                        f"\n[debug] tool={name!r} "
+                        f"params={json.dumps(params, sort_keys=True, ensure_ascii=False)}\n"
+                    )
+                    GLib.idle_add(self._append_text, dbg)
+
+                GLib.idle_add(self._append_tool_running_line, name)
+
+                self.conversation_history.append({"role": "assistant", "content": full.strip()})
+
+                if self.cancel_stream:
+                    break
+
+                result = run_tool(name, params)
+                feedback = format_tool_result_message(name, result)
+                if debug_tool_calls:
+                    dbg_fb = (
+                        "\n[debug] tool_result (next user message to model):\n"
+                        f"{feedback}\n"
+                    )
+                    GLib.idle_add(self._append_text, dbg_fb)
+                self._pending_tool_feedback = feedback
         finally:
             GLib.idle_add(self._stream_finished)
 
@@ -476,6 +594,7 @@ class MeeraWindow(Gtk.Window):
         """Start a new chat session"""
         # Clear conversation history
         self.conversation_history = []
+        self._pending_tool_feedback = None
         
         # Clear chat view
         self.chat_buf.set_text("")
@@ -588,18 +707,32 @@ class MeeraWindow(Gtk.Window):
         """Load a session into the current conversation"""
         messages = load_session(filepath)
         if messages:
-            # Replace current conversation history
-            self.conversation_history = messages
+            # Drop legacy synthetic tool-result rows (no longer stored in new sessions)
+            self.conversation_history = [
+                m
+                for m in messages
+                if not (
+                    m.get("role") == "user"
+                    and str(m.get("content") or "").startswith(TOOL_FEEDBACK_PREFIX)
+                )
+            ]
             
             # Clear chat view
             self.chat_buf.set_text("")
             
-            # Display loaded messages
+            # Display loaded messages (skip synthetic tool-feedback user rows)
             for msg in messages:
-                if msg["role"] == "user":
-                    self._append_message_line("You", msg["content"])
-                elif msg["role"] == "assistant":
-                    self._append_message_line("Meera", msg["content"])
+                role = msg.get("role")
+                content = msg.get("content") or ""
+                if role == "user":
+                    if content.startswith(TOOL_FEEDBACK_PREFIX):
+                        continue
+                    self._append_message_line("You", content)
+                elif role == "assistant":
+                    if try_parse_tool_call(content):
+                        self._append_message_line("Meera", "[Laptop tool was used — see following messages.]")
+                    else:
+                        self._append_message_line("Meera", content)
             
             # Close history window
             history_window.close()

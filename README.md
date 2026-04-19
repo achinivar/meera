@@ -3,7 +3,30 @@
 Meera is a local-only AI assistant prototype designed for GNOME desktops.  
 It streams chat from a local model using **[llama.cpp](https://github.com/ggml-org/llama.cpp)** `llama-server` (default) or **[Ollama](https://ollama.com/)**, and presents a native GTK4 chat UI.
 
-> ⚠️ This is an early prototype: it's a simple chat UI + local LLM, no system actions yet.
+> ⚠️ **Prototype.** The chat UI can run **allowlisted laptop tools** when **Phase 3** agent mode is on (default): the model may emit JSON tool calls; **`agent.py`** + **`tools/run_tool`** execute them and send results back for a final reply. Set **`MEERA_AGENT_TOOLS=0`** to disable tools and use plain chat only. See [`tools/README.md`](./tools/README.md) and [`Phase2_plan.md`](./Phase2_plan.md).
+
+---
+
+## Agent loop (Phase 3)
+
+| Variable | Purpose |
+|----------|---------|
+| `MEERA_AGENT_TOOLS` | **`1` (default)** — inject tool catalog into the system prompt and run **`run_tool`** when the model outputs `{"tool":...,"params":...}`. Set **`0`** for Phase‑1‑style chat only. |
+| `MEERA_AGENT_MAX_PASSES` | Max model passes per user message (tool rounds + final reply). Default **`8`**, clamped **2–16**. |
+
+Implementation: **`agent.py`** (prompt text + JSON parsing), **`ui/window.py`** (multi-turn loop). Each model pass is **buffered until complete**, then printed (so tool-call JSON is not shown token-by-token). After a tool runs, a short status line appears; the **final** natural-language reply is inserted the same way. Plain chat with **`MEERA_AGENT_TOOLS=0`** still streams tokens as before.
+
+---
+
+## Tool layer (Phase 2)
+
+Allowlisted helpers (Wi‑Fi readouts, volume, listing files under `$HOME`, package/flatpak lists, etc.) live under **`tools/`**. They use fixed command lines and validation, not a raw shell.
+
+Run unit tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ---
 
@@ -95,7 +118,11 @@ meera/
 ├── backend.py             # Ollama chat API client
 ├── llamacpp_backend.py    # llama-server OpenAI-compatible streaming client
 ├── inference.py           # Dispatches to backend by MEERA_BACKEND
+├── agent.py               # Phase 3: tool catalog prompt text + JSON tool-call parsing
 ├── history.py             # Chat history storage and management
+├── tools/                 # Phase 2: typed tools, runner, catalog JSON (see tools/README.md)
+├── tests/                 # e.g. test_tools.py — run with unittest discover
+├── Phase2_plan.md         # Tool layer design (roadmap Phase 2/3 handoff)
 ├── ui/
 │   └── window.py          # GTK4 UI definition with conversation history
 ├── assets/

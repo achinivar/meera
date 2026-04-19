@@ -38,12 +38,6 @@ TOOLS: list[ToolSpec] = [
         description="List top processes by CPU use (ps).",
         parameters=[
             ToolParam(
-                name="distro",
-                param_type="string",
-                required=True,
-                description='Must be "ubuntu" or "fedora".',
-            ),
-            ToolParam(
                 name="limit",
                 param_type="integer",
                 required=False,

@@ -1,4 +1,4 @@
-"""Aggregate tool catalog and JSON manifest for Phase 3 prompts."""
+"""Aggregate tool catalog and JSON serialization for prompts."""
 from __future__ import annotations
 
 import json
@@ -10,13 +10,7 @@ import tools.packages as packages_mod
 import tools.processes as processes_mod
 import tools.scheduler as scheduler_mod
 import tools.system as system_mod
-from tools.schema import (
-    TOOLS_SCHEMA_VERSION,
-    ToolParam,
-    ToolResult,
-    ToolSpec,
-    tool_result_ok,
-)
+from tools.schema import ToolParam, ToolResult, ToolSpec, tool_result_ok
 
 
 def _ping(params: Mapping[str, Any]) -> ToolResult:
@@ -26,14 +20,7 @@ def _ping(params: Mapping[str, Any]) -> ToolResult:
 PING_TOOL = ToolSpec(
     name="ping",
     description="No-op connectivity check; returns pong and resolved distro.",
-    parameters=[
-        ToolParam(
-            name="distro",
-            param_type="string",
-            required=True,
-            description='Must be "ubuntu" or "fedora" (runner injects from /etc/os-release if omitted).',
-        ),
-    ],
+    parameters=[],
     handler=_ping,
     read_only=True,
 )
@@ -67,31 +54,23 @@ def get_tool(name: str) -> ToolSpec | None:
     return None
 
 
-def _param_manifest(p: ToolParam) -> dict[str, Any]:
-    d: dict[str, Any] = {
-        "name": p.name,
-        "type": p.param_type,
-        "required": p.required,
-        "description": p.description,
-    }
-    if p.default is not None:
-        d["default"] = p.default
+def _prompt_param_manifest(p: ToolParam) -> dict[str, Any]:
+    # Do not emit "default" here — tiny models often mirror it as a bogus params key (e.g.
+    # {"default":"~"}) which fails validation. Describe defaults only in `description`.
+    d: dict[str, Any] = {"name": p.name, "type": p.param_type, "required": p.required}
+    if p.description:
+        d["description"] = p.description
     return d
 
 
-def _spec_manifest_dict(spec: ToolSpec) -> dict[str, Any]:
+def _prompt_spec_dict(spec: ToolSpec) -> dict[str, Any]:
     return {
         "name": spec.name,
         "description": spec.description,
-        "parameters": [_param_manifest(p) for p in spec.parameters],
-        "requires_elevation": spec.requires_elevation,
-        "read_only": spec.read_only,
+        "parameters": [_prompt_param_manifest(p) for p in spec.parameters],
     }
 
 
-def tools_manifest_json() -> str:
-    payload = {
-        "schema_version": TOOLS_SCHEMA_VERSION,
-        "tools": [_spec_manifest_dict(t) for t in TOOLS],
-    }
+def tools_prompt_catalog_json() -> str:
+    payload = {"tools": [_prompt_spec_dict(t) for t in TOOLS]}
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
