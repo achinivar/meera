@@ -1,0 +1,43 @@
+"""Tool metadata and execution results (Phase 2)."""
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any
+
+TOOLS_SCHEMA_VERSION = 1
+
+
+@dataclass
+class ToolParam:
+    name: str
+    param_type: str  # "string" | "integer" | "boolean"
+    required: bool
+    description: str
+    default: Any = None
+
+
+@dataclass
+class ToolResult:
+    ok: bool
+    message: str
+    data: Any = None
+    error_code: str | None = None
+
+
+@dataclass
+class ToolSpec:
+    name: str
+    description: str
+    parameters: list[ToolParam]
+    handler: Callable[[Mapping[str, Any]], ToolResult]
+    requires_elevation: bool = False
+    read_only: bool = True
+
+
+def tool_result_ok(message: str, data: Any = None) -> ToolResult:
+    return ToolResult(ok=True, message=message, data=data, error_code=None)
+
+
+def tool_result_err(message: str, error_code: str, data: Any = None) -> ToolResult:
+    return ToolResult(ok=False, message=message, data=data, error_code=error_code)
