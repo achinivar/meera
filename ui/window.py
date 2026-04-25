@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import gi  # type: ignore
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -35,14 +36,16 @@ class MeeraWindow(Gtk.Window):
         self.conversation_history = []
         # Tool JSON for summarize pass only (not stored in conversation_history)
         self._pending_tool_feedback: str | None = None
+        self._typing_start_mark = None
+        self._typing_end_mark = None
 
         # Base system identity (Phase 3 augments with tools catalog when MEERA_AGENT_TOOLS is on).
         self._system_identity = (
-            "You are Meera, an AI Puppy for Prism OS. You are helpful, playful, and designed to "
-            "assist users with their tasks and questions, specific to Prism OS, software recommendations, "
+            "You are Meera, an AI Puppy for Linux desktops. You are helpful, playful, and designed to "
+            "assist users with their tasks and questions on Linux desktops, software recommendations, "
             "configuring settings and debugging issues. You are also brief and to the point in your responses. "
-            "If you are uncertain about an answer or don't have enough information, you must state that in "
-            "your response."
+            "If you are uncertain about an answer or don't have enough information, politely refuse to answer and state your limitations"
+            "and suggest the user to ask a different question. You are not a general purpose AI, you are specific to Linux desktops."
         )
 
         # Detect theme and set up styling
@@ -128,6 +131,11 @@ class MeeraWindow(Gtk.Window):
         self.chat_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self.chat_view.add_css_class("meera-chat-view")
         self.chat_buf = self.chat_view.get_buffer()
+        self._link_tags: dict[str, str] = {}
+
+        click_controller = Gtk.GestureClick()
+        click_controller.connect("released", self._on_chat_click_released)
+        self.chat_view.add_controller(click_controller)
 
         # Create theme-aware text tags
         self._create_text_tags()
@@ -272,6 +280,23 @@ class MeeraWindow(Gtk.Window):
                 "user_right",
                 justification=Gtk.Justification.RIGHT,
             )
+            self.italic_tag = self.chat_buf.create_tag(
+                "italic_fg",
+                foreground="#ffffff",
+                style=Pango.Style.ITALIC,
+            )
+            self.inline_code_tag = self.chat_buf.create_tag(
+                "inline_code",
+                foreground="#d4d4d4",
+                family="monospace",
+                background="#2b2b2b",
+            )
+            self.code_block_tag = self.chat_buf.create_tag(
+                "code_block",
+                foreground="#d4d4d4",
+                family="monospace",
+                background="#1f1f1f",
+            )
         else:
             # Light theme: black text
             self.text_tag = self.chat_buf.create_tag(
@@ -288,6 +313,23 @@ class MeeraWindow(Gtk.Window):
             self.user_right_tag = self.chat_buf.create_tag(
                 "user_right",
                 justification=Gtk.Justification.RIGHT,
+            )
+            self.italic_tag = self.chat_buf.create_tag(
+                "italic_fg",
+                foreground="#000000",
+                style=Pango.Style.ITALIC,
+            )
+            self.inline_code_tag = self.chat_buf.create_tag(
+                "inline_code",
+                foreground="#1f1f1f",
+                family="monospace",
+                background="#e8e8e8",
+            )
+            self.code_block_tag = self.chat_buf.create_tag(
+                "code_block",
+                foreground="#1f1f1f",
+                family="monospace",
+                background="#efefef",
             )
         # Keep white_tag as alias for backward compatibility
         self.white_tag = self.text_tag
@@ -334,35 +376,155 @@ class MeeraWindow(Gtk.Window):
 
     def _append_tool_running_line(self, tool_name: str):
         """UI hint while executing a laptop tool (main thread)."""
-        self._append_text(f"\n⟳ Running `{tool_name}`…\n")
+        self._append_text(f"\n⟳ Running {tool_name}...\n")
         return False
+
+    def _insert_with_tags(self, text: str, tags: list[Gtk.TextTag]):
+        if not text:
+            return
+        buf = self.chat_buf
+        start = buf.get_char_count()
+        buf.insert(buf.get_end_iter(), text)
+        end = buf.get_char_count()
+        start_iter = buf.get_iter_at_offset(start)
+        end_iter = buf.get_iter_at_offset(end)
+        for tag in tags:
+            buf.apply_tag(tag, start_iter, end_iter)
+
+    def _link_tag_for_url(self, url: str) -> Gtk.TextTag:
+        existing_name = None
+        for name, value in self._link_tags.items():
+            if value == url:
+                existing_name = name
+                break
+        if existing_name is not None:
+            return self.chat_buf.get_tag_table().lookup(existing_name)
+
+        tag_name = f"link_{len(self._link_tags) + 1}"
+        link_tag = self.chat_buf.create_tag(
+            tag_name,
+            foreground="#4a90e2",
+            underline=Pango.Underline.SINGLE,
+        )
+        self._link_tags[tag_name] = url
+        return link_tag
+
+    def _insert_inline_markdown(self, text: str):
+        token_pattern = re.compile(
+            r"(\[([^\]]+)\]\((https?://[^\s)]+)\))|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(`([^`]+)`)|(\*([^*]+)\*)|(_([^_]+)_)"
+        )
+        pos = 0
+        for match in token_pattern.finditer(text):
+            start, end = match.span()
+            if start > pos:
+                self._insert_with_tags(text[pos:start], [self.text_tag])
+
+            if match.group(1):
+                label = match.group(2)
+                url = match.group(3)
+                self._insert_with_tags(label, [self.text_tag, self._link_tag_for_url(url)])
+            elif match.group(4):
+                self._insert_with_tags(match.group(5), [self.text_tag, self.bold_tag])
+            elif match.group(6):
+                self._insert_with_tags(match.group(7), [self.text_tag, self.bold_tag])
+            elif match.group(8):
+                self._insert_with_tags(match.group(9), [self.inline_code_tag])
+            elif match.group(10):
+                self._insert_with_tags(match.group(11), [self.text_tag, self.italic_tag])
+            elif match.group(12):
+                self._insert_with_tags(match.group(13), [self.text_tag, self.italic_tag])
+            pos = end
+
+        if pos < len(text):
+            self._insert_with_tags(text[pos:], [self.text_tag])
+
+    def _insert_markdown(self, text: str):
+        lines = text.splitlines(keepends=True)
+        in_code_block = False
+
+        for line in lines:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+
+            if in_code_block:
+                self._insert_with_tags(line, [self.code_block_tag])
+                continue
+
+            has_newline = line.endswith("\n")
+            content = line[:-1] if has_newline else line
+            self._insert_inline_markdown(content)
+            if has_newline:
+                self._insert_with_tags("\n", [self.text_tag])
+
+    def _on_chat_click_released(self, gesture, n_press, x, y):
+        try:
+            ok, iter_at_click = self.chat_view.get_iter_at_location(int(x), int(y))
+        except Exception:
+            return
+        if not ok:
+            return
+        for tag in iter_at_click.get_tags():
+            name = tag.get_property("name")
+            url = self._link_tags.get(name)
+            if url:
+                try:
+                    Gio.AppInfo.launch_default_for_uri(url, None)
+                except Exception:
+                    pass
+                break
 
     def _append_message_line(self, sender: str, text: str):
         buf = self.chat_buf
-        message = f"{sender}: {text}\n\n"
-    
+        if sender == "Meera":
+            self._clear_typing_indicator()
         start_offset = buf.get_char_count()
-        end_iter = buf.get_end_iter()
-        buf.insert(end_iter, message)
-        end_offset = buf.get_char_count()
-    
-        start_iter = buf.get_iter_at_offset(start_offset)
-        end_iter = buf.get_iter_at_offset(end_offset)
-    
-        # Apply theme-aware text color to entire message
-        buf.apply_tag(self.text_tag, start_iter, end_iter)
-    
-        # Make sender name bold (e.g., "Meera: " or "You: ")
-        sender_name_end = start_offset + len(sender) + 2  # +2 for ": "
-        sender_name_end_iter = buf.get_iter_at_offset(sender_name_end)
-        buf.apply_tag(self.bold_tag, start_iter, sender_name_end_iter)
-    
-        # Right align user messages
+        self._insert_with_tags(f"{sender}: ", [self.text_tag, self.bold_tag])
+
+        if sender == "Meera":
+            self._insert_markdown(text)
+        else:
+            self._insert_with_tags(text, [self.text_tag])
+
+        self._insert_with_tags("\n\n", [self.text_tag])
+
         if sender == "You":
+            end_offset = buf.get_char_count()
+            start_iter = buf.get_iter_at_offset(start_offset)
+            end_iter = buf.get_iter_at_offset(end_offset)
             buf.apply_tag(self.user_right_tag, start_iter, end_iter)
-    
+
         mark = buf.create_mark(None, buf.get_end_iter(), False)
         self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+    def _show_typing_indicator(self):
+        if self._typing_start_mark is not None:
+            return
+        buf = self.chat_buf
+        start_iter = buf.get_end_iter()
+        self._typing_start_mark = buf.create_mark(None, start_iter, True)
+        self._insert_with_tags("Meera: ", [self.text_tag, self.bold_tag])
+        self._insert_with_tags("Meera is typing...", [self.text_tag, self.italic_tag])
+        self._insert_with_tags("\n\n", [self.text_tag])
+        end_iter = buf.get_end_iter()
+        self._typing_end_mark = buf.create_mark(None, end_iter, False)
+        mark = buf.create_mark(None, buf.get_end_iter(), False)
+        self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+    def _clear_typing_indicator(self):
+        if self._typing_start_mark is None or self._typing_end_mark is None:
+            self._typing_start_mark = None
+            self._typing_end_mark = None
+            return
+        buf = self.chat_buf
+        start_iter = buf.get_iter_at_mark(self._typing_start_mark)
+        end_iter = buf.get_iter_at_mark(self._typing_end_mark)
+        buf.delete(start_iter, end_iter)
+        buf.delete_mark(self._typing_start_mark)
+        buf.delete_mark(self._typing_end_mark)
+        self._typing_start_mark = None
+        self._typing_end_mark = None
 
     def _set_button_state(self, streaming: bool):
         self.send_button.set_label("⏹" if streaming else "↑")
@@ -442,16 +604,7 @@ class MeeraWindow(Gtk.Window):
         self.is_streaming = True
         self.cancel_stream = False
         self._set_button_state(True)
-
-        # Add "Meera: " with bold formatting
-        buf = self.chat_buf
-        start_offset = buf.get_char_count()
-        buf.insert(buf.get_end_iter(), "Meera: ")
-        end_offset = buf.get_char_count()
-        start_iter = buf.get_iter_at_offset(start_offset)
-        end_iter = buf.get_iter_at_offset(end_offset)
-        buf.apply_tag(self.text_tag, start_iter, end_iter)
-        buf.apply_tag(self.bold_tag, start_iter, end_iter)
+        self._show_typing_indicator()
 
         thread = threading.Thread(
             target=self._stream_reply_worker,
@@ -474,10 +627,10 @@ class MeeraWindow(Gtk.Window):
                 if self.cancel_stream:
                     break
                 full_response += chunk
-                GLib.idle_add(self._append_text, chunk)
 
             if not self.cancel_stream and full_response:
                 self.conversation_history.append({"role": "assistant", "content": full_response})
+                GLib.idle_add(self._append_message_line, "Meera", full_response)
         finally:
             GLib.idle_add(self._stream_finished)
 
@@ -520,15 +673,13 @@ class MeeraWindow(Gtk.Window):
                         if self.cancel_stream:
                             break
                         full_response += chunk
-                        GLib.idle_add(self._append_text, chunk)
 
                     if self.cancel_stream:
                         break
 
                     if full_response:
-                        self.conversation_history.append(
-                            {"role": "assistant", "content": full_response}
-                        )
+                        self.conversation_history.append({"role": "assistant", "content": full_response})
+                        GLib.idle_add(self._append_message_line, "Meera", full_response)
                     break
 
                 buf_chunks: list[str] = []
@@ -548,8 +699,8 @@ class MeeraWindow(Gtk.Window):
 
                 if parsed is None:
                     if full:
-                        GLib.idle_add(self._append_text, full)
                         self.conversation_history.append({"role": "assistant", "content": full})
+                        GLib.idle_add(self._append_message_line, "Meera", full)
                     break
 
                 name = parsed["tool"]
@@ -564,7 +715,8 @@ class MeeraWindow(Gtk.Window):
 
                 GLib.idle_add(self._append_tool_running_line, name)
 
-                self.conversation_history.append({"role": "assistant", "content": full.strip()})
+                # Don't store raw tool-call JSON in conversation history — it creates
+                # back-to-back assistant messages that confuse the model's response pattern.
 
                 if self.cancel_stream:
                     break
@@ -582,7 +734,7 @@ class MeeraWindow(Gtk.Window):
             GLib.idle_add(self._stream_finished)
 
     def _stream_finished(self):
-        self._append_text("\n\n")
+        self._clear_typing_indicator()
         self.is_streaming = False
         self.cancel_stream = False
         self._set_button_state(False)
@@ -772,7 +924,7 @@ class MeeraWindow(Gtk.Window):
         vbox.append(title_label)
 
         # Description
-        desc_label = Gtk.Label(label="AI companion for Prism OS")
+        desc_label = Gtk.Label(label="AI companion for Linux desktops")
         desc_label.set_margin_top(10)
         vbox.append(desc_label)
 

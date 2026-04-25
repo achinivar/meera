@@ -235,6 +235,44 @@ def _volume_mute_toggle(params: Mapping[str, Any]) -> ToolResult:
     return tool_result_ok(f"Volume mute state set to {state}", data={"state": state})
 
 
+def _volume_adjust(params: Mapping[str, Any]) -> ToolResult:
+    _ = params["distro"]
+    direction = params["direction"]
+    percent = params["percent"]
+    if direction not in ("up", "down"):
+        return tool_result_err(
+            "direction must be 'up' or 'down'",
+            "VALIDATION_ERROR",
+        )
+    if not (1 <= percent <= 150):
+        return tool_result_err(
+            "percent must be between 1 and 150",
+            "VALIDATION_ERROR",
+        )
+    sign = "+" if direction == "up" else "-"
+    frac = f"{percent / 100:.2f}"
+    if shutil.which("wpctl"):
+        r = run_argv(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{frac}{sign}"], timeout=10.0)
+    elif shutil.which("pactl"):
+        r = run_argv(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{percent}%{sign}"], timeout=10.0)
+    else:
+        return tool_result_err(
+            "Neither wpctl nor pactl found",
+            "COMMAND_NOT_FOUND",
+        )
+    if isinstance(r, ToolResult):
+        return r
+    if r.returncode != 0:
+        return tool_result_err(
+            f"Command failed: {r.stderr or r.stdout}",
+            "COMMAND_FAILED",
+        )
+    return tool_result_ok(
+        f"Volume {'increased' if direction == 'up' else 'decreased'} by {percent}%",
+        data={"direction": direction, "percent": percent},
+    )
+
+
 def _brightness_set(params: Mapping[str, Any]) -> ToolResult:
     _ = params["distro"]
     action = params["action"]
@@ -501,6 +539,16 @@ TOOLS: list[ToolSpec] = [
             ToolParam(name="state", param_type="string", required=True, description="One of: mute, unmute, toggle"),
         ],
         handler=_volume_mute_toggle,
+        read_only=False,
+    ),
+    ToolSpec(
+        name="volume_adjust",
+        description="Adjust volume relatively (increase or decrease by a percentage).",
+        parameters=[
+            ToolParam(name="direction", param_type="string", required=True, description="One of: up, down"),
+            ToolParam(name="percent", param_type="integer", required=True, description="Percentage to adjust by (1-150)"),
+        ],
+        handler=_volume_adjust,
         read_only=False,
     ),
     ToolSpec(
