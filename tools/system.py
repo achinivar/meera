@@ -179,9 +179,9 @@ def _volume_get(params: Mapping[str, Any]) -> ToolResult:
 def _volume_set_percent(params: Mapping[str, Any]) -> ToolResult:
     _ = params["distro"]
     percent = params["percent"]
-    if not (0 <= percent <= 150):
+    if not (0 <= percent <= 100):
         return tool_result_err(
-            "percent must be between 0 and 150",
+            "percent must be between 0 and 100",
             "VALIDATION_ERROR",
         )
     frac = f"{percent / 100:.2f}"
@@ -244,9 +244,9 @@ def _volume_adjust(params: Mapping[str, Any]) -> ToolResult:
             "direction must be 'up' or 'down'",
             "VALIDATION_ERROR",
         )
-    if not (1 <= percent <= 150):
+    if not (1 <= percent <= 100):
         return tool_result_err(
-            "percent must be between 1 and 150",
+            "percent must be between 1 and 100",
             "VALIDATION_ERROR",
         )
     sign = "+" if direction == "up" else "-"
@@ -525,9 +525,9 @@ TOOLS: list[ToolSpec] = [
     ),
     ToolSpec(
         name="volume_set_percent",
-        description="Set volume to a percentage (0-150). Uses wpctl if available, else pactl.",
+        description="Set volume to a percentage (0-100). Uses wpctl if available, else pactl.",
         parameters=[
-            ToolParam(name="percent", param_type="integer", required=True, description="Volume percentage (0-150)"),
+            ToolParam(name="percent", param_type="integer", required=True, description="Volume percentage (0-100)"),
         ],
         handler=_volume_set_percent,
         read_only=False,
@@ -546,7 +546,7 @@ TOOLS: list[ToolSpec] = [
         description="Adjust volume relatively (increase or decrease by a percentage).",
         parameters=[
             ToolParam(name="direction", param_type="string", required=True, description="One of: up, down"),
-            ToolParam(name="percent", param_type="integer", required=True, description="Percentage to adjust by (1-150)"),
+            ToolParam(name="percent", param_type="integer", required=True, description="Percentage to adjust by (1-100)"),
         ],
         handler=_volume_adjust,
         read_only=False,
