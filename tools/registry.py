@@ -8,8 +8,10 @@ from typing import Any
 import tools.files as files_mod
 import tools.packages as packages_mod
 import tools.processes as processes_mod
+import tools.screenshot as screenshot_mod
 import tools.scheduler as scheduler_mod
 import tools.system as system_mod
+import tools.weather as weather_mod
 from tools.schema import ToolParam, ToolResult, ToolSpec, tool_result_ok
 
 
@@ -34,6 +36,8 @@ def _collect_tools() -> list[ToolSpec]:
         *processes_mod.TOOLS,
         *packages_mod.TOOLS,
         *scheduler_mod.TOOLS,
+        *screenshot_mod.TOOLS,
+        *weather_mod.TOOLS,
     ]
     names = [t.name for t in merged]
     seen: set[str] = set()
