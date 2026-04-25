@@ -1,0 +1,35 @@
+---
+description: Require exact prompt diff and explicit user consent before any prompt edits
+alwaysApply: true
+---
+
+# Prompt Change Consent (Strict)
+
+This project uses a highly prompt-sensitive 2B model.
+
+- Never modify any model prompt text without explicit user confirmation first.
+- Never assume that discussing prompt quality is permission to edit the prompt.
+- Never "silently improve" prompts.
+- Never rewrite, reorder, shorten, expand, normalize, or reformat prompt text without prior confirmation.
+
+Before any prompt change, Cursor must:
+
+1. Print the full current prompt exactly as sent to the model (word-for-word, punctuation-for-punctuation, whitespace preserved when relevant).
+2. Print the full proposed prompt exactly as it would be sent after the change.
+3. If the prompt depends on conversation history, print the example conversation history/context exactly as used with the prompt.
+4. Provide an explicit before/after comparison with exact text, not a high-level summary.
+5. Ask for explicit approval and wait for a clear user confirmation before applying any change.
+
+Hard requirements:
+
+- Exact text only; no paraphrased diffs.
+- If there are multiple prompts/templates, show each exact before/after pair.
+- If conversation history is part of prompt construction, show that history/context with the prompt before asking for approval.
+- If uncertain whether a change affects prompt text, treat it as a prompt change and require approval.
+- If approval is missing, ambiguous, or implied, do not change the prompt.
+- Repeat this process every time prompt text would change.
+
+Absolute prohibition:
+
+- Cursor is forbidden from changing prompt text without first showing exact before/after prompts and receiving explicit consent.
+- This prohibition applies even when the user asks to "improve", "tune", "fix", or "modify" prompts until exact before/after text is shown and approved.
