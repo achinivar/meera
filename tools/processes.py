@@ -158,6 +158,15 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_process_list,
         read_only=True,
+        exemplars=[
+            "what's running",
+            "show me running processes",
+            "list active processes",
+            "top CPU processes",
+            "what processes are using CPU",
+            "show all processes",
+            "ps aux equivalent",
+        ],
     ),
     ToolSpec(
         name="process_kill_by_name",
@@ -180,6 +189,15 @@ TOOLS: list[ToolSpec] = [
         handler=_process_kill_by_name,
         read_only=False,
         requires_elevation=False,
+        exemplars=[
+            "kill firefox",
+            "stop the chrome process",
+            "force kill spotify",
+            "terminate slack",
+            "end the process called vlc",
+            "shut down zoom",
+            "kill the python script",
+        ],
     ),
     ToolSpec(
         name="process_high_usage",
@@ -209,6 +227,15 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_process_high_usage,
         read_only=True,
+        exemplars=[
+            "what's using lots of CPU",
+            "show me high CPU processes",
+            "what's hogging memory",
+            "find resource-heavy processes",
+            "what's eating my CPU",
+            "show me processes using too much memory",
+            "anything pegging the CPU",
+        ],
     ),
     ToolSpec(
         name="process_check_running",
@@ -223,5 +250,13 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_process_check_running,
         read_only=True,
+        exemplars=[
+            "is firefox running",
+            "check if chrome is open",
+            "is slack running right now",
+            "is the python process up",
+            "is docker running",
+            "is X currently active",
+        ],
     ),
 ]

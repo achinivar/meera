@@ -3,18 +3,45 @@
 Meera is a local-only AI assistant prototype designed for GNOME desktops.  
 It streams chat from a local model using **[llama.cpp](https://github.com/ggml-org/llama.cpp)** `llama-server` (default) or **[Ollama](https://ollama.com/)**, and presents a native GTK4 chat UI.
 
-> ⚠️ **Prototype.** The chat UI can run **allowlisted laptop tools** when **Phase 3** agent mode is on (default): the model may emit JSON tool calls; **`agent.py`** + **`tools/run_tool`** execute them and send results back for a final reply. Set **`MEERA_AGENT_TOOLS=0`** to disable tools and use plain chat only. See [`tools/README.md`](./tools/README.md) and [`Phase2_plan.md`](./Phase2_plan.md).
+> ⚠️ **Prototype.** The chat UI runs **allowlisted laptop tools** when agent mode is on (default). Each user message goes through a **retrieval-first agent**: a heuristic fast-path catches obvious intents, otherwise an embedding index narrows down 2–4 candidate tools and pulls in any relevant `rag_data/*.md` snippets, then a **single** LLM call decides whether to call a tool (via llama.cpp native tool calling) or reply directly. Set **`MEERA_AGENT_TOOLS=0`** to disable tools and use plain chat only. See [`tools/README.md`](./tools/README.md), [`phases/Phase4_plan.md`](./phases/Phase4_plan.md), and the "Adding a tool" / "Adding RAG data" sections below.
 
 ---
 
-## Agent loop (Phase 3)
+## Agent loop
+
+Two `llama-server` instances run side-by-side: the chat model on **port 8080** and a small `bge-small-en-v1.5` embedding model on **port 8081**. `run_meera.sh` starts both and exits cleanly on Ctrl+C.
 
 | Variable | Purpose |
 |----------|---------|
-| `MEERA_AGENT_TOOLS` | **`1` (default)** — inject tool catalog into the system prompt and run **`run_tool`** when the model outputs `{"tool":...,"params":...}`. Set **`0`** for Phase‑1‑style chat only. |
-| `MEERA_AGENT_MAX_PASSES` | Max model passes per user message (tool rounds + final reply). Default **`8`**, clamped **2–16**. |
+| `MEERA_AGENT_TOOLS` | **`1` (default)** — give the chat model a retrieval-narrowed tools list and run any tool calls it emits. Set **`0`** for plain chat only. |
+| `MEERA_AGENT_MAX_PASSES` | Max assistant↔tool round-trips per user message. Default **`3`**, clamped **1–8**. |
+| `MEERA_DEBUG_TOOL_CALLS` | Set to **`1`** to print retrieval / tool-call debug lines into the chat view. |
+| `MEERA_DEBUG_RETRIEVAL` | Set to **`1`** to print embedding / retrieval debug to stderr. |
+| `MEERA_RETRIEVAL_K_TOOLS` / `MEERA_RETRIEVAL_K_RAG` | Top-k caps for tools / RAG chunks per turn. Defaults **`4`** / **`3`**. |
+| `MEERA_RETRIEVAL_TOOL_THRESHOLD` / `MEERA_RETRIEVAL_RAG_THRESHOLD` | Cosine-similarity floors. Defaults **`0.35`** / **`0.35`**. |
+| `MEERA_EMBED_URL` | Embedding server URL (default `http://127.0.0.1:8081`). |
+| `MEERA_EMBED_FAKE` | Set **`1`** in tests to use a deterministic hash embedder (no server needed). |
+| `MEERA_DISABLE_EMBED` | Set **`1`** to skip starting the embedding server in `run_meera.sh`. The agent then falls back to chat-only (no tools, no RAG). |
 
-Implementation: **`agent.py`** (prompt text + JSON parsing), **`ui/window.py`** (multi-turn loop). Each model pass is **buffered until complete**, then printed (so tool-call JSON is not shown token-by-token). After a tool runs, a short status line appears; the **final** natural-language reply is inserted the same way. Plain chat with **`MEERA_AGENT_TOOLS=0`** still streams tokens as before.
+Implementation: **`agent.py`** (`decide_turn` + `run_agent_turn` event generator), **`retrieval/`** (in-memory cosine index over tool exemplars + Markdown chunks), **`embeddings.py`** (HTTP client for the embedding server), **`ui/window.py`** (consumes the agent event stream and drives GTK4). Tool calls go over llama-server's OpenAI-compatible `tools=[...]` + `tool_choice=auto` API; if the embedding server is unreachable the agent degrades to plain chat.
+
+---
+
+## Adding a tool
+
+1. Pick or create a module under `tools/` (e.g. `tools/files.py`).
+2. Define a handler with the signature `handler(args: dict) -> ToolResult` and add a `ToolSpec(name=..., description=..., parameters=[...], handler=...)` to the module's exported list.
+3. **Add 5–10 `exemplars`** — natural-language phrases real users would type. These power retrieval; the test in `tests/test_tools.py::test_every_tool_has_exemplars` enforces a minimum.
+4. Register the spec by exporting it from your module and listing it in `tools/registry.py::TOOLS`.
+5. Restart Meera. The retrieval index is rebuilt at startup, so the new tool is immediately reachable.
+6. Optional: if the user's intent for this tool can be matched with a tight regex (e.g. `set X to N%`), add a fast-path entry to `_HEURISTIC_PATTERNS` in `agent.py` to skip the LLM entirely.
+
+## Adding RAG data
+
+1. Drop a Markdown file into `rag_data/` (lowercase filename, ending in `.md`). `README.md` in that folder is excluded from the index.
+2. Use a single **H1** for the document title, and split the body with **H2** headings — each H2 becomes one retrievable chunk that includes the H1 title for context.
+3. Keep chunks small and self-contained (a few paragraphs or one fenced code example each); don't rely on H3+ as boundaries.
+4. Restart Meera. `retrieval/rag_chunker.py` reads the directory, the index re-embeds, and the new chunks are now eligible to be inlined into the system prompt as `<KNOWLEDGE>` blocks when the user asks a related question.
 
 ---
 
@@ -115,19 +142,22 @@ Expected repo layout:
 ```text
 meera/
 ├── meera.py               # Main application entry
-├── backend.py             # Ollama chat API client
-├── llamacpp_backend.py    # llama-server OpenAI-compatible streaming client
-├── inference.py           # Dispatches to backend by MEERA_BACKEND
-├── agent.py               # Phase 3: tool catalog prompt text + JSON tool-call parsing
+├── backend.py             # Ollama chat API client (event-aware streaming)
+├── llamacpp_backend.py    # llama-server OpenAI-compatible streaming client + tool calls
+├── inference.py           # Dispatches to backend by MEERA_BACKEND, exposes supports_tools()
+├── agent.py               # Retrieval-first agent: decide_turn + run_agent_turn event stream
+├── embeddings.py          # HTTP client for the embedding llama-server (port 8081)
+├── retrieval/             # In-memory cosine index (tool exemplars + rag_data chunks)
+├── rag_data/              # Markdown knowledge base; one H1 per file, split at H2 headings
 ├── history.py             # Chat history storage and management
-├── tools/                 # Phase 2: typed tools, runner, catalog JSON (see tools/README.md)
-├── tests/                 # e.g. test_tools.py — run with unittest discover
-├── Phase2_plan.md         # Tool layer design (roadmap Phase 2/3 handoff)
+├── tools/                 # Typed tools, runner, registry (see tools/README.md)
+├── tests/                 # test_agent.py, test_retrieval.py, test_tools.py
+├── phases/                # Phase2_plan.md, Phase4_plan.md, progress_summary.md
 ├── ui/
-│   └── window.py          # GTK4 UI definition with conversation history
+│   └── window.py          # GTK4 UI definition; consumes the agent event stream
 ├── assets/
 │   └── meera_bg.png       # Background image for chat area
-└── run_meera.sh           # Setup + run script
+└── run_meera.sh           # Setup + run script (starts both llama-server instances)
 ```
 
 ### Dependencies (installed by `run_meera.sh` for Ubuntu and Fedora)

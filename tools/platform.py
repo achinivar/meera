@@ -8,7 +8,7 @@ Distro = Literal["ubuntu", "fedora"]
 
 _OS_RELEASE = Path("/etc/os-release")
 
-# Map to "ubuntu" (apt) or "fedora" (dnf/rpm) per Phase2_plan.md §4.4
+# Map to "ubuntu" (apt) or "fedora" (dnf/rpm) per phases/Phase2_plan.md §4.4
 _APT_IDS = frozenset({"ubuntu", "debian", "pop", "linuxmint"})
 _RPM_IDS = frozenset({"fedora", "rhel", "centos", "rocky", "almalinux"})
 

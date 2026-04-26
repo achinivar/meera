@@ -23,10 +23,19 @@ from agent import (
     TOOL_FEEDBACK_PREFIX,
     TOOL_MEMORY_PREFIX,
     agent_tools_enabled,
-    try_parse_route_decision,
-    try_parse_tool_call,
+    run_agent_turn,
 )
-from tools.registry import get_tool
+from tools.runner import detect_distro
+
+
+_LEGACY_TOOL_CALL_RE = re.compile(r'\{\s*"tool"\s*:\s*"[A-Za-z_][A-Za-z0-9_]*"', re.DOTALL)
+
+
+def _looks_like_legacy_tool_call(content: str) -> bool:
+    """True for old Phase 3 sessions where assistant messages stored raw {"tool": ...} JSON."""
+    if not isinstance(content, str) or not content.strip():
+        return False
+    return _LEGACY_TOOL_CALL_RE.search(content) is not None
 
 
 class MeeraWindow(Gtk.Window):
@@ -40,10 +49,6 @@ class MeeraWindow(Gtk.Window):
         
         # Conversation history for context
         self.conversation_history = []
-        # Tool JSON for summarize pass only (not stored in conversation_history)
-        self._pending_tool_feedback: str | None = None
-        # Last classified tool family used successfully in routing (e.g. "volume").
-        self._last_tool_type: str | None = None
         self._streaming_message_active = False
         self._typing_start_mark = None
         self._typing_end_mark = None
@@ -404,17 +409,6 @@ class MeeraWindow(Gtk.Window):
             self._streaming_message_active = False
         return False
 
-    def _looks_like_terse_tool_followup(self, text: str) -> bool:
-        t = text.strip().lower()
-        if not t:
-            return False
-        terse_patterns = (
-            r"\b\d{1,3}\s*%\s*(more|less)\b",
-            r"^(more|less|up|down|louder|quieter|mute|unmute)\b",
-            r"^(turn|set|increase|decrease|raise|lower)\b",
-        )
-        return any(re.search(p, t) for p in terse_patterns)
-
     def _insert_with_tags(self, text: str, tags: list[Gtk.TextTag]):
         if not text:
             return
@@ -635,7 +629,6 @@ class MeeraWindow(Gtk.Window):
 
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": prompt})
-        self._pending_tool_feedback = None
 
         self.is_streaming = True
         self.cancel_stream = False
@@ -673,207 +666,83 @@ class MeeraWindow(Gtk.Window):
             GLib.idle_add(self._stream_finished)
 
     def _stream_reply_worker_agent(self):
-        """Phase 3: classify route, select tool when needed, then summarize."""
-        from agent import (
-            build_reply_system_message_content,
-            build_route_system_message_content,
-            build_summarize_system_message_content,
-            build_tool_selection_system_message_content,
-            format_tool_memory_message,
-            format_tool_result_message,
-            max_agent_passes,
+        """Phase 4: drive one turn through the retrieval-first agent loop."""
+        debug_tool_calls = os.environ.get("MEERA_DEBUG_TOOL_CALLS", "").strip().lower() in (
+            "1", "true", "yes", "on",
         )
-        from tools.runner import run_tool
+        if debug_tool_calls:
+            # Keep debug lines visible: typing indicator clears would remove them.
+            GLib.idle_add(self._clear_typing_indicator)
 
         try:
-            max_pass = max_agent_passes()
-            debug_tool_calls = os.environ.get("MEERA_DEBUG_TOOL_CALLS", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-            )
-            if debug_tool_calls:
-                # Keep debug lines visible: otherwise they can be removed when typing indicator is cleared.
-                GLib.idle_add(self._clear_typing_indicator)
+            distro = detect_distro()
+        except Exception:
+            distro = "unknown"
 
-            for _ in range(max_pass):
+        # The user message has already been appended in on_send(); pass everything
+        # before it as history and the prompt itself separately.
+        history_for_agent = list(self.conversation_history[:-1])
+        if not self.conversation_history or self.conversation_history[-1].get("role") != "user":
+            GLib.idle_add(self._stream_finished)
+            return
+        user_text = str(self.conversation_history[-1].get("content") or "")
+
+        full_response = ""
+        memory_messages: list[str] = []
+
+        try:
+            for event in run_agent_turn(
+                history_for_agent,
+                user_text,
+                distro=distro,
+                base_identity=self._system_identity,
+            ):
                 if self.cancel_stream:
                     break
-
-                if self._pending_tool_feedback is not None:
-                    feedback_msg = self._pending_tool_feedback
-                    self._pending_tool_feedback = None
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": build_summarize_system_message_content(self._system_identity),
-                        },
-                        {"role": "user", "content": feedback_msg},
-                    ]
-                    full_response = ""
-                    for chunk in stream_llm(messages):
-                        if self.cancel_stream:
-                            break
+                kind = event.get("kind")
+                if kind == "thinking":
+                    if debug_tool_calls:
+                        stage = event.get("stage", "?")
+                        tools = event.get("tools") or []
+                        rag = event.get("rag") or []
+                        GLib.idle_add(
+                            self._append_text,
+                            f"\n[debug] stage={stage} tools={tools} rag={rag}\n",
+                        )
+                elif kind == "tool_running":
+                    tool = str(event.get("tool") or "?")
+                    params = event.get("params") or {}
+                    if debug_tool_calls:
+                        GLib.idle_add(
+                            self._append_text,
+                            f"\n[debug] tool={tool!r} params={json.dumps(params, sort_keys=True, ensure_ascii=False)}\n",
+                        )
+                    GLib.idle_add(self._append_tool_running_line, tool)
+                elif kind == "tool_result":
+                    mm = event.get("memory_message")
+                    if isinstance(mm, str) and mm:
+                        memory_messages.append(mm)
+                    if debug_tool_calls:
+                        GLib.idle_add(
+                            self._append_text,
+                            f"\n[debug] tool_result: ok={getattr(event.get('result'), 'ok', '?')}\n",
+                        )
+                elif kind == "content":
+                    chunk = event.get("text") or ""
+                    if chunk:
                         full_response += chunk
                         GLib.idle_add(self._append_streaming_message_chunk, chunk)
-
-                    if self.cancel_stream:
-                        break
-
-                    if full_response:
-                        self.conversation_history.append({"role": "assistant", "content": full_response})
-                    GLib.idle_add(self._finish_streaming_message_line)
+                elif kind == "done":
                     break
 
-                route_messages = [
-                    {"role": "system", "content": build_route_system_message_content(self._system_identity)}
-                ] + list(self.conversation_history)
-                route_chunks: list[str] = []
-                for chunk in stream_llm(route_messages):
-                    if self.cancel_stream:
-                        break
-                    route_chunks.append(chunk)
-
-                if self.cancel_stream:
-                    break
-
-                route_raw = "".join(route_chunks)
-                route = try_parse_route_decision(route_raw)
-                if debug_tool_calls:
-                    dbg_route = (
-                        "\n[debug] route_raw:\n"
-                        f"{route_raw}\n"
-                        "[debug] route_parsed="
-                        f"{json.dumps(route, ensure_ascii=False, sort_keys=True) if route is not None else 'null'}\n"
-                    )
-                    GLib.idle_add(self._append_text, dbg_route)
-                if route is None:
-                    route = {"route": "no_tool"}
-
-                latest_user_prompt = ""
-                for msg in reversed(self.conversation_history):
-                    if msg.get("role") == "user":
-                        latest_user_prompt = str(msg.get("content") or "")
-                        break
-
-                if (
-                    route["route"] == "no_tool"
-                    and self._last_tool_type is not None
-                    and self._looks_like_terse_tool_followup(latest_user_prompt)
-                ):
-                    route = {"route": "tool", "type": self._last_tool_type}
-                    if debug_tool_calls:
-                        GLib.idle_add(
-                            self._append_text,
-                            (
-                                "\n[debug] route_override_from_last_type="
-                                f"{json.dumps(route, ensure_ascii=False, sort_keys=True)}\n"
-                            ),
-                        )
-
-                if route["route"] == "no_tool":
-                    reply_messages = [
-                        {"role": "system", "content": build_reply_system_message_content(self._system_identity)}
-                    ] + list(self.conversation_history)
-                    reply_full = ""
-                    for chunk in stream_llm(reply_messages):
-                        if self.cancel_stream:
-                            break
-                        reply_full += chunk
-                        GLib.idle_add(self._append_streaming_message_chunk, chunk)
-
-                    if self.cancel_stream:
-                        break
-                    if reply_full:
-                        self.conversation_history.append({"role": "assistant", "content": reply_full})
-                    GLib.idle_add(self._finish_streaming_message_line)
-                    break
-
-                route_type = str(route["type"])
-                selector_messages = [
-                    {
-                        "role": "system",
-                        "content": build_tool_selection_system_message_content(
-                            self._system_identity, route_type
-                        ),
-                    },
-                    {"role": "user", "content": latest_user_prompt},
-                ]
-                selector_chunks: list[str] = []
-                for chunk in stream_llm(selector_messages):
-                    if self.cancel_stream:
-                        break
-                    selector_chunks.append(chunk)
-
-                if self.cancel_stream:
-                    break
-
-                parsed = try_parse_tool_call("".join(selector_chunks))
-                if debug_tool_calls:
-                    selector_raw = "".join(selector_chunks)
-                    dbg_selector = (
-                        "\n[debug] selector_raw:\n"
-                        f"{selector_raw}\n"
-                        "[debug] selector_parsed="
-                        f"{json.dumps(parsed, ensure_ascii=False, sort_keys=True) if parsed is not None else 'null'}\n"
-                    )
-                    GLib.idle_add(self._append_text, dbg_selector)
-                if parsed is None or get_tool(parsed["tool"]) is None:
-                    if debug_tool_calls:
-                        reason = "invalid_json_or_schema"
-                        if parsed is not None and get_tool(parsed["tool"]) is None:
-                            reason = f"unknown_tool:{parsed['tool']}"
-                        GLib.idle_add(
-                            self._append_text,
-                            f"\n[debug] selector_fallback_to_reply reason={reason}\n",
-                        )
-                    reply_messages = [
-                        {"role": "system", "content": build_reply_system_message_content(self._system_identity)}
-                    ] + list(self.conversation_history)
-                    reply_full = ""
-                    for chunk in stream_llm(reply_messages):
-                        if self.cancel_stream:
-                            break
-                        reply_full += chunk
-                        GLib.idle_add(self._append_streaming_message_chunk, chunk)
-                    if self.cancel_stream:
-                        break
-                    if reply_full:
-                        self.conversation_history.append({"role": "assistant", "content": reply_full})
-                    GLib.idle_add(self._finish_streaming_message_line)
-                    break
-
-                name = parsed["tool"]
-                params = parsed.get("params") or {}
-                self._last_tool_type = route_type
-
-                if debug_tool_calls:
-                    dbg = (
-                        f"\n[debug] tool={name!r} "
-                        f"params={json.dumps(params, sort_keys=True, ensure_ascii=False)}\n"
-                    )
-                    GLib.idle_add(self._append_text, dbg)
-
-                GLib.idle_add(self._append_tool_running_line, name)
-
-                # Don't store raw tool-call JSON in conversation history — it creates
-                # back-to-back assistant messages that confuse the model's response pattern.
-
-                if self.cancel_stream:
-                    break
-
-                result = run_tool(name, params)
-                feedback = format_tool_result_message(name, result)
-                tool_memory = format_tool_memory_message(name, result)
-                # Keep compact tool outputs in history so follow-up turns can reference prior tool results.
-                self.conversation_history.append({"role": "assistant", "content": tool_memory})
-                if debug_tool_calls:
-                    dbg_fb = (
-                        "\n[debug] tool_result (next user message to model):\n"
-                        f"{feedback}\n"
-                    )
-                    GLib.idle_add(self._append_text, dbg_fb)
-                self._pending_tool_feedback = feedback
+            if not self.cancel_stream:
+                # Persist any tool-memory messages first so future turns see the
+                # tool outputs in context, then the final natural-language reply.
+                for mm in memory_messages:
+                    self.conversation_history.append({"role": "assistant", "content": mm})
+                if full_response:
+                    self.conversation_history.append({"role": "assistant", "content": full_response})
+                GLib.idle_add(self._finish_streaming_message_line)
         finally:
             GLib.idle_add(self._stream_finished)
 
@@ -889,15 +758,8 @@ class MeeraWindow(Gtk.Window):
 
     def _on_new_chat_clicked(self, button=None):
         """Start a new chat session"""
-        # Clear conversation history
         self.conversation_history = []
-        self._pending_tool_feedback = None
-        self._last_tool_type = None
-        
-        # Clear chat view
         self.chat_buf.set_text("")
-        
-        # Show initial greeting
         self._initial_greeting()
 
     def _on_history_clicked(self, button=None):
@@ -1014,12 +876,11 @@ class MeeraWindow(Gtk.Window):
                     and str(m.get("content") or "").startswith(TOOL_FEEDBACK_PREFIX)
                 )
             ]
-            self._last_tool_type = None
-            
             # Clear chat view
             self.chat_buf.set_text("")
-            
-            # Display loaded messages (skip synthetic tool-feedback user rows)
+
+            # Display loaded messages (skip synthetic tool-feedback/memory rows
+            # and legacy raw tool-call JSON from pre-Phase-4 sessions).
             for msg in messages:
                 role = msg.get("role")
                 content = msg.get("content") or ""
@@ -1030,7 +891,7 @@ class MeeraWindow(Gtk.Window):
                 elif role == "assistant":
                     if content.startswith(TOOL_MEMORY_PREFIX):
                         continue
-                    if try_parse_tool_call(content):
+                    if _looks_like_legacy_tool_call(content):
                         self._append_message_line("Meera", "[Laptop tool was used — see following messages.]")
                     else:
                         self._append_message_line("Meera", content)

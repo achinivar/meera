@@ -1,6 +1,6 @@
 # Phase 2 — Tool layer: detailed plan
 
-**Parent doc:** [meera_roadmap.md](./meera_roadmap.md)  
+**Parent doc:** [meera_roadmap.md](../meera_roadmap.md)  
 **Goal:** A clean, typed catalog of every action the assistant may take, with no raw shell escape hatch.  
 **Timeline (roadmap):** Day 2–3 for *definition*; expect longer if you implement stubs for every module below in one pass.
 
