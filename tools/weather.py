@@ -83,5 +83,14 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_weather_query,
         read_only=True,
+        exemplars=[
+            "what's the weather in Tokyo",
+            "weather in San Francisco",
+            "is it raining in London",
+            "what's the temperature in Paris",
+            "show me the weather for New York",
+            "how hot is it in Bangalore",
+            "current weather for JFK",
+        ],
     ),
 ]

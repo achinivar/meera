@@ -82,5 +82,14 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_screenshot_save,
         read_only=False,
+        exemplars=[
+            "take a screenshot",
+            "screenshot my screen",
+            "capture the screen",
+            "snap a picture of the desktop",
+            "save a screenshot",
+            "screen capture please",
+            "grab my current screen",
+        ],
     ),
 ]

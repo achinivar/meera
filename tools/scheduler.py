@@ -218,6 +218,14 @@ TOOLS: list[ToolSpec] = [
         parameters=[],
         handler=_timer_list,
         read_only=True,
+        exemplars=[
+            "list my reminders",
+            "show active timers",
+            "what reminders do I have",
+            "show my pending reminders",
+            "list user timers",
+            "what timers are scheduled",
+        ],
     ),
     ToolSpec(
         name="reminder_set",
@@ -245,6 +253,15 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_tool_reminder_set,
         read_only=False,
+        exemplars=[
+            "remind me in 30 minutes to call mom",
+            "set a reminder for 5 minutes",
+            "remind me in an hour to take a break",
+            "create a reminder to drink water in 20 mins",
+            "set a 10 minute timer to check the oven",
+            "ping me in 2 hours",
+            "wake me up in 45 minutes",
+        ],
     ),
     ToolSpec(
         name="reminder_delete",
@@ -259,5 +276,13 @@ TOOLS: list[ToolSpec] = [
         ],
         handler=_tool_reminder_delete,
         read_only=False,
+        exemplars=[
+            "delete reminder meera-reminder-3",
+            "remove the reminder",
+            "cancel reminder X",
+            "delete my timer",
+            "remove the reminder named meera-reminder-1",
+            "scrap that reminder",
+        ],
     ),
 ]

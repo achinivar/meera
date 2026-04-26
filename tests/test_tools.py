@@ -32,6 +32,25 @@ class TestRegistry(unittest.TestCase):
                 self.assertNotEqual(p.get("name"), "distro")
                 self.assertNotIn("default", p)
 
+    def test_every_tool_has_exemplars(self) -> None:
+        # Phase 4 retrieval needs at least a few paraphrased utterances per tool
+        # so the index can map natural-language requests onto the right tool.
+        # Tighten this lower bound only as we systematically add more.
+        MIN_EXEMPLARS = 3
+        missing: list[str] = []
+        for spec in TOOLS:
+            if not isinstance(spec.exemplars, list):
+                missing.append(f"{spec.name}: exemplars not a list")
+                continue
+            if len(spec.exemplars) < MIN_EXEMPLARS:
+                missing.append(f"{spec.name}: only {len(spec.exemplars)} exemplars")
+                continue
+            for ex in spec.exemplars:
+                if not isinstance(ex, str) or not ex.strip():
+                    missing.append(f"{spec.name}: empty/non-string exemplar")
+                    break
+        self.assertEqual(missing, [], f"tools missing exemplars: {missing}")
+
 
 class TestRunner(unittest.TestCase):
     def test_unknown_tool(self) -> None:

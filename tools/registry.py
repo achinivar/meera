@@ -25,6 +25,13 @@ PING_TOOL = ToolSpec(
     parameters=[],
     handler=_ping,
     read_only=True,
+    exemplars=[
+        "ping",
+        "are you alive",
+        "test the tool plumbing",
+        "internal ping",
+        "diagnostic ping",
+    ],
 )
 
 

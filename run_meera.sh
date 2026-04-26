@@ -81,6 +81,10 @@ MEERA_DEFAULT_GGUF_NAME="Qwen3.5-2B-Q4_K_M.gguf"
 MEERA_DEFAULT_GGUF_URL="https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/${MEERA_DEFAULT_GGUF_NAME}"
 MEERA_GGUF_CACHE_DIR="${MEERA_GGUF_CACHE_DIR:-$ROOT_DIR/.cache/meera/models}"
 
+# Embedding GGUF (small sentence-transformer for retrieval / RAG).
+MEERA_EMBED_DEFAULT_GGUF_NAME="bge-small-en-v1.5-q8_0.gguf"
+MEERA_EMBED_DEFAULT_GGUF_URL="https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/${MEERA_EMBED_DEFAULT_GGUF_NAME}"
+
 if [ "${MEERA_BACKEND:-llamacpp}" = "llamacpp" ]; then
   echo "MEERA_BACKEND=llamacpp — skipping Ollama install/serve/pull."
 
@@ -248,6 +252,98 @@ except Exception:
       exit 1
     fi
     echo "llama-server is up at $LLAMA_BASE"
+  fi
+
+  ##########################################################################
+  # Embedding llama-server (small sentence-transformer for retrieval / RAG)
+  ##########################################################################
+  # Skip with MEERA_DISABLE_EMBED=1 (retrieval will be unavailable, agent
+  # falls back to a no-retrieval reply path). Default port 8081.
+  if [ "${MEERA_DISABLE_EMBED:-0}" != "1" ]; then
+    EMBED_BASE="${MEERA_EMBED_URL:-http://127.0.0.1:8081}"
+    EMBED_BASE="${EMBED_BASE%/}"
+    embed_server_reachable() {
+      python3 -c "
+import sys, urllib.request
+try:
+    urllib.request.urlopen('$EMBED_BASE/v1/models', timeout=3)
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" >/dev/null 2>&1
+    }
+
+    if [ -z "${MEERA_EMBED_GGUF:-}" ]; then
+      _embed_gguf_path="$MEERA_GGUF_CACHE_DIR/$MEERA_EMBED_DEFAULT_GGUF_NAME"
+      if [ -f "$_embed_gguf_path" ] && [ -s "$_embed_gguf_path" ]; then
+        echo "Using cached embedding GGUF: $_embed_gguf_path"
+      else
+        section "Downloading embedding GGUF (first run, ~37 MB)"
+        echo "Source: $MEERA_EMBED_DEFAULT_GGUF_URL"
+        mkdir -p "$MEERA_GGUF_CACHE_DIR"
+        _embed_part="$_embed_gguf_path.part"
+        if command -v curl >/dev/null 2>&1; then
+          curl -fL --retry 3 -C - --proto '=https' \
+            -o "$_embed_part" "$MEERA_EMBED_DEFAULT_GGUF_URL"
+        else
+          echo "curl not found; install curl or download the file manually to:"
+          echo "  $_embed_gguf_path"
+          exit 1
+        fi
+        mv -f "$_embed_part" "$_embed_gguf_path"
+        echo "Saved: $_embed_gguf_path"
+      fi
+      export MEERA_EMBED_GGUF="$_embed_gguf_path"
+    elif [ ! -f "${MEERA_EMBED_GGUF}" ]; then
+      echo "MEERA_EMBED_GGUF points to a missing file: $MEERA_EMBED_GGUF"
+      exit 1
+    fi
+
+    if embed_server_reachable; then
+      echo "embedding llama-server already responding at $EMBED_BASE"
+    else
+      if [ -z "${LLAMA_BIN:-}" ]; then
+        meera_ensure_llama_bundle
+        LLAMA_BIN="$_meera_llama_server"
+      fi
+      _erest="${EMBED_BASE#*://}"
+      _erest="${_erest%%/*}"
+      case "$_erest" in
+        *:*)
+          _EMBED_HOST="${_erest%%:*}"
+          _EMBED_PORT="${_erest#*:}"
+          ;;
+        *)
+          _EMBED_HOST="$_erest"
+          _EMBED_PORT="8081"
+          ;;
+      esac
+      if [ "$_EMBED_HOST" != "127.0.0.1" ] && [ "$_EMBED_HOST" != "localhost" ]; then
+        echo "Auto-start only works when MEERA_EMBED_URL uses host 127.0.0.1 or localhost"
+        echo "(got '$_EMBED_HOST'). Start an embedding llama-server on that host yourself."
+        exit 1
+      fi
+      section "Starting embedding llama-server"
+      echo "Model: $MEERA_EMBED_GGUF"
+      echo "Log: /tmp/llama_meera_embed.log"
+      env LD_LIBRARY_PATH="${MEERA_LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        "$LLAMA_BIN" -m "$MEERA_EMBED_GGUF" --host "$_EMBED_HOST" --port "$_EMBED_PORT" \
+        --embeddings -c 512 \
+        >/tmp/llama_meera_embed.log 2>&1 &
+      _ewait=0
+      while [ "$_ewait" -lt 30 ] && ! embed_server_reachable; do
+        sleep 1
+        _ewait=$((_ewait + 1))
+      done
+      if ! embed_server_reachable; then
+        echo "embedding llama-server did not become reachable at $EMBED_BASE (see /tmp/llama_meera_embed.log)."
+        exit 1
+      fi
+      echo "embedding llama-server is up at $EMBED_BASE"
+    fi
+    export MEERA_EMBED_URL="$EMBED_BASE"
+  else
+    echo "MEERA_DISABLE_EMBED=1 — skipping embedding server (retrieval / RAG disabled)."
   fi
 else
   if ! command -v ollama >/dev/null 2>&1; then

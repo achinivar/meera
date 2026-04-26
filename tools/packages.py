@@ -69,6 +69,15 @@ TOOLS: list[ToolSpec] = [
         parameters=[],
         handler=_packages_list_updates,
         read_only=True,
+        exemplars=[
+            "are there package updates",
+            "what packages can be updated",
+            "show available updates",
+            "list package upgrades",
+            "any updates pending",
+            "what can I upgrade",
+            "check for system updates",
+        ],
     ),
     ToolSpec(
         name="flatpak_list",
@@ -76,5 +85,13 @@ TOOLS: list[ToolSpec] = [
         parameters=[],
         handler=_flatpak_list,
         read_only=True,
+        exemplars=[
+            "list installed flatpaks",
+            "show flatpak apps",
+            "what flatpaks do I have",
+            "list my flatpak applications",
+            "show installed flatpak apps",
+            "which flatpak packages are installed",
+        ],
     ),
 ]
