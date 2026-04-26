@@ -144,6 +144,39 @@ def _fp_ping(_m: re.Match[str]) -> dict[str, Any]:
     return {"tool": "ping", "params": {}}
 
 
+def _fp_night_light_on(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "night_light_set", "params": {"state": "on"}}
+
+
+def _fp_night_light_off(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "night_light_set", "params": {"state": "off"}}
+
+
+def _fp_night_light_status(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "night_light_status", "params": {}}
+
+
+def _fp_color_scheme_mode(m: re.Match[str]) -> dict[str, Any]:
+    mode = m.group("mode").strip().lower()
+    return {"tool": "color_scheme_set", "params": {"mode": mode}}
+
+
+def _fp_dnd_on(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "dnd_set", "params": {"state": "on"}}
+
+
+def _fp_dnd_off(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "dnd_set", "params": {"state": "off"}}
+
+
+def _fp_alt_tab_default(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "default"}}
+
+
+def _fp_alt_tab_traditional(_m: re.Match[str]) -> dict[str, Any]:
+    return {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "traditional"}}
+
+
 # Order matters: more specific patterns should appear first so they win when
 # multiple regexes could match. Each pattern is run with `re.IGNORECASE`.
 _HEURISTIC_PATTERNS: list[tuple[str, Any]] = [
@@ -170,6 +203,33 @@ _HEURISTIC_PATTERNS: list[tuple[str, Any]] = [
     (r"\b(?:turn\s+)?wifi\s+off\b", _fp_wifi_off),
     (r"\benable\s+wi[-\s]?fi\b", _fp_wifi_on),
     (r"\bdisable\s+wi[-\s]?fi\b", _fp_wifi_off),
+    # Night Light on/off
+    (r"\b(?:turn\s+)?night\s+light\s+on\b", _fp_night_light_on),
+    (r"\b(?:turn\s+)?night\s+light\s+off\b", _fp_night_light_off),
+    (r"\benable\s+night\s+light\b", _fp_night_light_on),
+    (r"\bdisable\s+night\s+light\b", _fp_night_light_off),
+    # Night Light status
+    (r"\bis\s+night\s+light\s+(?:on|enabled|active)\b", _fp_night_light_status),
+    # Dark / Light mode
+    (r"\b(?:switch\s+to|enable|turn\s+on)\s+(?P<mode>dark|light)\s+mode\b", _fp_color_scheme_mode),
+    # Do Not Disturb on/off
+    (r"\b(?:turn\s+)?do\s+not\s+disturb\s+on\b", _fp_dnd_on),
+    (r"\b(?:turn\s+)?do\s+not\s+disturb\s+off\b", _fp_dnd_off),
+    (r"\benable\s+do\s+not\s+disturb\b", _fp_dnd_on),
+    (r"\bdisable\s+do\s+not\s+disturb\b", _fp_dnd_off),
+    # Alt+Tab: clear switch-windows binding (group-by-app default) before broad phrases
+    (r"\b(?:restore|reset)\s+(?:the\s+)?alt[-\s]?tab\s+(?:to\s+)?(?:default|normal)\b", _fp_alt_tab_default),
+    (r"\b(?:restore|reset)\s+(?:the\s+)?default\s+(?:gnome\s+)?alt[-\s]?tab\b", _fp_alt_tab_default),
+    (r"\bgroup\s+alt[-\s]?tab\s+by\s+(?:application|app)s?\b", _fp_alt_tab_default),
+    (r"\balt[-\s]?tab\s+group(?:ed)?\s+by\s+(?:application|app)s?\b", _fp_alt_tab_default),
+    (r"\bput\s+alt[-\s]?tab\s+back\s+to\s+(?:apps|applications)\b", _fp_alt_tab_default),
+    # Alt+Tab: traditional (bind switch-windows to Alt+Tab)
+    (r"\btraditional\s+alt[-\s]?tab\b", _fp_alt_tab_traditional),
+    (r"\bungroup(?:ed)?\s+alt[-\s]?tab\b", _fp_alt_tab_traditional),
+    (r"\b(?:do\s+not|don't)\s+group\s+alt[-\s]?tab\b", _fp_alt_tab_traditional),
+    (r"\balt[-\s]?tab\s+(?:for\s+)?(?:each|every|individual)\s+window\b", _fp_alt_tab_traditional),
+    (r"\balt[-\s]?tab\s+switch(?:es)?\s+windows?\s+not\s+apps?\b", _fp_alt_tab_traditional),
+    (r"\bmake\s+alt[-\s]?tab\s+(?:cycle\s+)?(?:each|every|all)\s+windows?\b", _fp_alt_tab_traditional),
     # Internal ping
     (r"^\s*ping\s*\.?\s*$", _fp_ping),
 ]

@@ -226,7 +226,7 @@ Narrow v1:
 
 | Tool | Behavior |
 |------|----------|
-| `timer_list` | `systemctl --user list-timers` parse |
+| `reminder_list` | `systemctl --user list-timers` parse |
 | `timer_describe` | Show next run for a **known-prefix** unit name |
 
 Creating timers: defer until Phase 3 can validate unit names and you document security.
@@ -287,7 +287,7 @@ Target: every **implemented** tool has at least one test; stubs can skip until i
 3. **`files.py`** — `file_list_dir` under `$HOME` only (`distro` in schema, ignored).  
 4. **`processes.py`** — `process_list` (`distro` in schema, ignored).  
 5. **`packages.py`** — read-only list commands **branching on `distro`**.  
-6. **`scheduler.py`** — `timer_list`.  
+6. **`scheduler.py`** — `reminder_list`.  
 7. **Wifi / connect / mutating package ops** — last, after threat review.
 
 ---

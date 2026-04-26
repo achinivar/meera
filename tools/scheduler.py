@@ -1,10 +1,11 @@
-"""systemd user timers and reminders."""
+"""systemd user timers, reminders, and GNOME Calendar import."""
 from __future__ import annotations
 
 import os
-import time
+import tempfile
+import uuid
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ _MEERA_DATA = Path(os.path.expanduser("~/.local/share/meera_reminders"))
 _SYSTEMD_USER = Path(os.path.expanduser("~/.config/systemd/user"))
 
 
-def _timer_list(params: Mapping[str, Any]) -> ToolResult:
+def _reminder_list(params: Mapping[str, Any]) -> ToolResult:
     _ = params["distro"]
     r = run_argv(
         [
@@ -38,7 +39,7 @@ def _timer_list(params: Mapping[str, Any]) -> ToolResult:
         )
     lines = [ln.rstrip() for ln in r.stdout.splitlines() if ln.strip()]
     return tool_result_ok(
-        f"{len(lines)} user timer row(s)",
+        f"{len(lines)} systemd user timer row(s) (includes Meera reminders: meera-reminder-*)",
         data={"lines": lines[:300]},
     )
 
@@ -137,11 +138,16 @@ def _tool_reminder_set(params: Mapping[str, Any]) -> ToolResult:
         f"ExecStart=/bin/bash -c '{cleanup_cmd}'\n"
     )
 
+    _SYSTEMD_USER.mkdir(parents=True, exist_ok=True)
+    service_path = _SYSTEMD_USER / f"{unit_id}.service"
     timer_path.write_text(timer_content)
-    (_SYSTEMD_USER / f"{unit_id}.service").write_text(service_content)
+    service_path.write_text(service_content)
 
     reload_err = _daemon_reload()
     if reload_err is not None:
+        for p in [timer_path, service_path, msg_file]:
+            if p.exists():
+                p.unlink(missing_ok=True)
         return reload_err
 
     r = run_argv(
@@ -149,9 +155,12 @@ def _tool_reminder_set(params: Mapping[str, Any]) -> ToolResult:
         timeout=10.0,
     )
     if isinstance(r, ToolResult):
+        for p in [timer_path, service_path, msg_file]:
+            if p.exists():
+                p.unlink(missing_ok=True)
         return r
     if r.returncode != 0:
-        for p in [timer_path, _SYSTEMD_USER / f"{unit_id}.service", msg_file]:
+        for p in [timer_path, service_path, msg_file]:
             if p.exists():
                 p.unlink(missing_ok=True)
         return tool_result_err(
@@ -211,18 +220,172 @@ def _tool_reminder_delete(params: Mapping[str, Any]) -> ToolResult:
     )
 
 
+# ---- GNOME Calendar: import via .ics + gio open (no dedicated CLI) ----
+
+_MAX_SUMMARY_LEN = 1024
+_MIN_DURATION_MIN = 1
+_MAX_DURATION_MIN = 10080  # 7 days
+
+
+def _ics_text_escape(s: str) -> str:
+    """RFC 5545 TEXT escaping for SUMMARY / DESCRIPTION (subset)."""
+    s = s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return s.replace("\n", "\\n")
+
+
+def _duration_to_ics(duration_minutes: int) -> str:
+    if duration_minutes % 60 == 0 and duration_minutes >= 60:
+        return f"PT{duration_minutes // 60}H"
+    return f"PT{duration_minutes}M"
+
+
+def _localize_naive_to_system(dt: datetime) -> datetime:
+    local = datetime.now().astimezone().tzinfo
+    if local is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=local)
+
+
+def _parse_event_start(start: str) -> datetime | ToolResult:
+    s = start.strip()
+    if not s:
+        return tool_result_err(
+            "start must be a non-empty ISO 8601 datetime (e.g. 2024-05-01T09:00:00Z).",
+            "VALIDATION_ERROR",
+        )
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return tool_result_err(
+            "start must be ISO 8601 (e.g. 2024-05-01T09:00:00 or 2024-05-01T14:00:00Z).",
+            "VALIDATION_ERROR",
+        )
+    if dt.tzinfo is None:
+        dt = _localize_naive_to_system(dt)
+    return dt.astimezone(timezone.utc)
+
+
+def _build_vevent_ics_document(
+    summary: str,
+    start_utc: datetime,
+    duration_minutes: int,
+) -> str:
+    """Return a minimal VEVENT ICS document (CRLF), UTC DTSTART, DURATION."""
+    uid = f"{uuid.uuid4()}@meera"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dtstart = start_utc.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dur = _duration_to_ics(duration_minutes)
+    summ = _ics_text_escape(summary.strip())
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Meera//GNOME Calendar//EN",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{stamp}",
+        f"SUMMARY:{summ}",
+        f"DTSTART:{dtstart}",
+        f"DURATION:{dur}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _gnome_calendar_event_add(params: Mapping[str, Any]) -> ToolResult:
+    _ = params["distro"]
+    summary: str = params["summary"]
+    start_raw: str = params["start"]
+    duration_minutes: int = params["duration_minutes"]
+
+    text = summary.strip()
+    if not text:
+        return tool_result_err("summary must not be empty", "VALIDATION_ERROR")
+    if len(text) > _MAX_SUMMARY_LEN:
+        return tool_result_err(
+            f"summary exceeds {_MAX_SUMMARY_LEN} characters",
+            "VALIDATION_ERROR",
+        )
+
+    if duration_minutes < _MIN_DURATION_MIN or duration_minutes > _MAX_DURATION_MIN:
+        return tool_result_err(
+            f"duration_minutes must be between {_MIN_DURATION_MIN} and {_MAX_DURATION_MIN}",
+            "VALIDATION_ERROR",
+        )
+
+    start_parsed = _parse_event_start(start_raw)
+    if isinstance(start_parsed, ToolResult):
+        return start_parsed
+
+    ics_body = _build_vevent_ics_document(text, start_parsed, duration_minutes)
+    ics_bytes = ics_body.encode("utf-8")
+
+    fd: int | None = None
+    path: str | None = None
+    try:
+        fd, path = tempfile.mkstemp(prefix="meera-cal-", suffix=".ics")
+        with os.fdopen(fd, "wb") as f:
+            f.write(ics_bytes)
+        fd = None
+    except OSError as e:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        return tool_result_err(str(e), "OS_ERROR")
+
+    assert path is not None
+    r = run_argv(["gio", "open", path], timeout=30.0)
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+    if isinstance(r, ToolResult):
+        return r
+    if r.returncode != 0:
+        return tool_result_err(
+            r.stderr or r.stdout or "gio open failed",
+            "COMMAND_FAILED",
+        )
+
+    return tool_result_ok(
+        "Calendar invite written and opened; confirm import in GNOME Calendar if prompted.",
+        data={
+            "summary": text,
+            "start_utc": start_parsed.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "duration_minutes": duration_minutes,
+        },
+    )
+
+
 TOOLS: list[ToolSpec] = [
     ToolSpec(
-        name="timer_list",
-        description="List systemd --user timers.",
+        name="reminder_list",
+        description=(
+            "List pending scheduled items from systemd user timers. Use this when the user "
+            "asks for their reminders: Meera reminder units are named meera-reminder-* and "
+            "appear in the output together with any other --user timers."
+        ),
         parameters=[],
-        handler=_timer_list,
+        handler=_reminder_list,
         read_only=True,
         exemplars=[
             "list my reminders",
-            "show active timers",
+            "list all reminders",
             "what reminders do I have",
             "show my pending reminders",
+            "show active timers",
             "list user timers",
             "what timers are scheduled",
         ],
@@ -283,6 +446,55 @@ TOOLS: list[ToolSpec] = [
             "delete my timer",
             "remove the reminder named meera-reminder-1",
             "scrap that reminder",
+        ],
+    ),
+    ToolSpec(
+        name="gnome_calendar_event_add",
+        description=(
+            "Add or schedule a calendar event (meeting, appointment, lunch, etc.) for GNOME "
+            "Calendar by writing a temporary .ics file and opening it with gio so the user can "
+            "import the event into the Evolution/GNOME Calendar pipeline. Requires an ISO 8601 "
+            "start time; naive times are interpreted in the system timezone."
+        ),
+        parameters=[
+            ToolParam(
+                name="summary",
+                param_type="string",
+                required=True,
+                description="Event title (SUMMARY), e.g. 'Lunch with Alex'.",
+            ),
+            ToolParam(
+                name="start",
+                param_type="string",
+                required=True,
+                description=(
+                    "Event start as ISO 8601, e.g. 2024-05-01T14:00:00Z or "
+                    "2024-05-01T09:00:00 (local if no offset)."
+                ),
+            ),
+            ToolParam(
+                name="duration_minutes",
+                param_type="integer",
+                required=True,
+                description="Length of the event in minutes (1-10080).",
+            ),
+        ],
+        handler=_gnome_calendar_event_add,
+        read_only=False,
+        exemplars=[
+            "add lunch to my calendar tomorrow at 1pm",
+            "can you add lunch on my calendar tomorrow at 1pm",
+            "put lunch on the calendar tomorrow at noon",
+            "schedule a meeting tomorrow at 3pm for an hour",
+            "add a calendar event team standup tomorrow at 9",
+            "create a meeting in my calendar Friday 3pm for one hour",
+            "schedule a dentist appointment on June 10 at 10:30",
+            "block off 2 hours on my calendar tomorrow morning for deep work",
+            "new calendar entry coffee with Sam Thursday 4pm",
+            "book 30 minutes on my calendar for standup",
+            "add an event titled budget review starting 2024-05-01T15:00:00Z lasting 90 minutes",
+            "GNOME calendar add event sync interview Monday 11am",
+            "remind me on the calendar that I have a flight at 7am",
         ],
     ),
 ]
