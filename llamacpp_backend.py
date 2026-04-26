@@ -22,8 +22,8 @@ def _model_name() -> str:
     return os.environ.get("MEERA_LLAMACPP_MODEL", "local")
 
 
-def stream_llm(messages: list) -> Iterator[str]:
-    """Yield assistant text chunks from llama-server SSE stream."""
+def stream_llm_events(messages: list) -> Iterator[dict[str, str]]:
+    """Yield assistant events from llama-server SSE stream."""
     url = f"{_base_url()}/v1/chat/completions"
     payload = {
         "model": _model_name(),
@@ -53,12 +53,21 @@ def stream_llm(messages: list) -> Iterator[str]:
                 err = obj.get("error")
                 if err is not None:
                     msg = err if isinstance(err, str) else err.get("message", str(err))
-                    yield f"[Model error: {msg}]"
+                    yield {"kind": "content", "text": f"[Model error: {msg}]"}
                     break
                 for choice in obj.get("choices") or []:
                     delta = choice.get("delta") or {}
                     chunk = delta.get("content")
                     if chunk:
-                        yield chunk
+                        yield {"kind": "content", "text": chunk}
     except Exception as e:
-        yield f"[Error contacting model: {e}]"
+        yield {"kind": "content", "text": f"[Error contacting model: {e}]"}
+
+
+def stream_llm(messages: list) -> Iterator[str]:
+    """Backward-compatible content-only text stream."""
+    for event in stream_llm_events(messages):
+        if event.get("kind") == "content":
+            chunk = event.get("text")
+            if chunk:
+                yield chunk

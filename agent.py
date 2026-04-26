@@ -10,6 +10,8 @@ from tools.schema import ToolResult
 
 # Synthetic user messages carrying run_tool output start with this prefix (session reload UX).
 TOOL_FEEDBACK_PREFIX = "[Tool result]\n"
+# Synthetic assistant memory messages storing compact tool outputs for later turns.
+TOOL_MEMORY_PREFIX = "[Tool memory]\n"
 
 
 def agent_tools_enabled() -> bool:
@@ -386,6 +388,44 @@ def format_tool_result_message(tool_name: str, result: ToolResult) -> str:
     }
     inner = json.dumps(payload, ensure_ascii=False, indent=2)
     return f"{TOOL_FEEDBACK_PREFIX}{inner}"
+
+
+def _compact_tool_data(value: Any, *, max_items: int = 80, max_str: int = 220, depth: int = 0) -> Any:
+    if depth >= 3:
+        return "<truncated>"
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for i, (k, v) in enumerate(value.items()):
+            if i >= max_items:
+                out["__truncated_keys__"] = True
+                break
+            out[str(k)] = _compact_tool_data(v, max_items=max_items, max_str=max_str, depth=depth + 1)
+        return out
+    if isinstance(value, list):
+        items = value[:max_items]
+        out_list = [
+            _compact_tool_data(v, max_items=max_items, max_str=max_str, depth=depth + 1) for v in items
+        ]
+        if len(value) > max_items:
+            out_list.append(f"...({len(value) - max_items} more)")
+        return out_list
+    if isinstance(value, str):
+        if len(value) <= max_str:
+            return value
+        return f"{value[:max_str]}...(+{len(value) - max_str} chars)"
+    return value
+
+
+def format_tool_memory_message(tool_name: str, result: ToolResult) -> str:
+    payload = {
+        "tool": tool_name,
+        "ok": result.ok,
+        "message": result.message,
+        "error_code": result.error_code,
+        "data": _compact_tool_data(result.data),
+    }
+    inner = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"{TOOL_MEMORY_PREFIX}{inner}"
 
 
 def max_agent_passes() -> int:

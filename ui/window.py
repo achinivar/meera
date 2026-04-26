@@ -19,7 +19,13 @@ import threading
 from inference import stream_llm
 from history import save_session, list_sessions, load_session
 
-from agent import TOOL_FEEDBACK_PREFIX, agent_tools_enabled, try_parse_route_decision, try_parse_tool_call
+from agent import (
+    TOOL_FEEDBACK_PREFIX,
+    TOOL_MEMORY_PREFIX,
+    agent_tools_enabled,
+    try_parse_route_decision,
+    try_parse_tool_call,
+)
 from tools.registry import get_tool
 
 
@@ -38,6 +44,7 @@ class MeeraWindow(Gtk.Window):
         self._pending_tool_feedback: str | None = None
         # Last classified tool family used successfully in routing (e.g. "volume").
         self._last_tool_type: str | None = None
+        self._streaming_message_active = False
         self._typing_start_mark = None
         self._typing_end_mark = None
 
@@ -381,6 +388,22 @@ class MeeraWindow(Gtk.Window):
         self._append_text(f"\n⟳ Running {tool_name}...\n")
         return False
 
+    def _append_streaming_message_chunk(self, chunk: str):
+        if not chunk:
+            return False
+        if not self._streaming_message_active:
+            self._clear_typing_indicator()
+            self._append_text("Meera: ")
+            self._streaming_message_active = True
+        self._append_text(chunk)
+        return False
+
+    def _finish_streaming_message_line(self):
+        if self._streaming_message_active:
+            self._append_text("\n\n")
+            self._streaming_message_active = False
+        return False
+
     def _looks_like_terse_tool_followup(self, text: str) -> bool:
         t = text.strip().lower()
         if not t:
@@ -640,10 +663,12 @@ class MeeraWindow(Gtk.Window):
                 if self.cancel_stream:
                     break
                 full_response += chunk
+                GLib.idle_add(self._append_streaming_message_chunk, chunk)
 
-            if not self.cancel_stream and full_response:
-                self.conversation_history.append({"role": "assistant", "content": full_response})
-                GLib.idle_add(self._append_message_line, "Meera", full_response)
+            if not self.cancel_stream:
+                if full_response:
+                    self.conversation_history.append({"role": "assistant", "content": full_response})
+                GLib.idle_add(self._finish_streaming_message_line)
         finally:
             GLib.idle_add(self._stream_finished)
 
@@ -654,6 +679,7 @@ class MeeraWindow(Gtk.Window):
             build_route_system_message_content,
             build_summarize_system_message_content,
             build_tool_selection_system_message_content,
+            format_tool_memory_message,
             format_tool_result_message,
             max_agent_passes,
         )
@@ -689,13 +715,14 @@ class MeeraWindow(Gtk.Window):
                         if self.cancel_stream:
                             break
                         full_response += chunk
+                        GLib.idle_add(self._append_streaming_message_chunk, chunk)
 
                     if self.cancel_stream:
                         break
 
                     if full_response:
                         self.conversation_history.append({"role": "assistant", "content": full_response})
-                        GLib.idle_add(self._append_message_line, "Meera", full_response)
+                    GLib.idle_add(self._finish_streaming_message_line)
                     break
 
                 route_messages = [
@@ -753,12 +780,13 @@ class MeeraWindow(Gtk.Window):
                         if self.cancel_stream:
                             break
                         reply_full += chunk
+                        GLib.idle_add(self._append_streaming_message_chunk, chunk)
 
                     if self.cancel_stream:
                         break
                     if reply_full:
                         self.conversation_history.append({"role": "assistant", "content": reply_full})
-                        GLib.idle_add(self._append_message_line, "Meera", reply_full)
+                    GLib.idle_add(self._finish_streaming_message_line)
                     break
 
                 route_type = str(route["type"])
@@ -807,11 +835,12 @@ class MeeraWindow(Gtk.Window):
                         if self.cancel_stream:
                             break
                         reply_full += chunk
+                        GLib.idle_add(self._append_streaming_message_chunk, chunk)
                     if self.cancel_stream:
                         break
                     if reply_full:
                         self.conversation_history.append({"role": "assistant", "content": reply_full})
-                        GLib.idle_add(self._append_message_line, "Meera", reply_full)
+                    GLib.idle_add(self._finish_streaming_message_line)
                     break
 
                 name = parsed["tool"]
@@ -835,6 +864,9 @@ class MeeraWindow(Gtk.Window):
 
                 result = run_tool(name, params)
                 feedback = format_tool_result_message(name, result)
+                tool_memory = format_tool_memory_message(name, result)
+                # Keep compact tool outputs in history so follow-up turns can reference prior tool results.
+                self.conversation_history.append({"role": "assistant", "content": tool_memory})
                 if debug_tool_calls:
                     dbg_fb = (
                         "\n[debug] tool_result (next user message to model):\n"
@@ -846,6 +878,7 @@ class MeeraWindow(Gtk.Window):
             GLib.idle_add(self._stream_finished)
 
     def _stream_finished(self):
+        self._finish_streaming_message_line()
         self._clear_typing_indicator()
         self.is_streaming = False
         self.cancel_stream = False
@@ -995,6 +1028,8 @@ class MeeraWindow(Gtk.Window):
                         continue
                     self._append_message_line("You", content)
                 elif role == "assistant":
+                    if content.startswith(TOOL_MEMORY_PREFIX):
+                        continue
                     if try_parse_tool_call(content):
                         self._append_message_line("Meera", "[Laptop tool was used — see following messages.]")
                     else:

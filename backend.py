@@ -4,7 +4,7 @@ import json
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "qwen3.5:2b-q4_K_M"
 
-def stream_llm(messages: list, model: str = MODEL_NAME):
+def stream_llm_events(messages: list, model: str = MODEL_NAME):
     """
     Generator that yields small chunks of text from the model as they arrive.
     
@@ -13,7 +13,7 @@ def stream_llm(messages: list, model: str = MODEL_NAME):
         model: Model name to use
     
     Yields:
-        Chunks of text as they arrive from the model
+        Event dicts: {"kind":"content"|"thinking","text": "..."}
     """
     payload = {
         "model": model,
@@ -36,18 +36,26 @@ def stream_llm(messages: list, model: str = MODEL_NAME):
 
             packet = json.loads(line.decode())
 
-            # Normal streaming token
-            if "message" in packet and "content" in packet["message"]:
-                chunk = packet["message"]["content"]
+            if "message" in packet:
+                message = packet["message"] or {}
+                chunk = message.get("content")
                 if chunk:
-                    yield chunk
+                    yield {"kind": "content", "text": chunk}
 
             # If Ollama returns an error field
             if "error" in packet:
-                yield f"[Model error: {packet['error']}]"
+                yield {"kind": "content", "text": f"[Model error: {packet['error']}]"}
                 break
 
     except Exception as e:
         # Propagate error as a chunk so UI can show it
-        yield f"[Error contacting model: {e}]"
+        yield {"kind": "content", "text": f"[Error contacting model: {e}]"}
+
+
+def stream_llm(messages: list, model: str = MODEL_NAME):
+    for event in stream_llm_events(messages, model=model):
+        if event.get("kind") == "content":
+            chunk = event.get("text")
+            if chunk:
+                yield chunk
 

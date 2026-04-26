@@ -8,6 +8,7 @@ from agent import (
     build_reply_system_message_content,
     build_summarize_system_message_content,
     build_tool_selection_system_message_content,
+    format_tool_memory_message,
     format_tool_result_message,
     try_parse_route_decision,
     try_parse_tool_call,
@@ -98,6 +99,13 @@ class TestToolFormat(unittest.TestCase):
         self.assertTrue(msg.startswith("[Tool result]\n"))
         self.assertIn("ping", msg)
         self.assertIn('"ok": true', msg)
+
+    def test_memory_prefix(self) -> None:
+        r = tool_result_ok("ok", data={"entries": [str(i) for i in range(120)]})
+        msg = format_tool_memory_message("file_search_name", r)
+        self.assertTrue(msg.startswith("[Tool memory]\n"))
+        self.assertIn("file_search_name", msg)
+        self.assertIn("...(", msg)
 
 
 if __name__ == "__main__":

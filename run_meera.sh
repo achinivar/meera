@@ -235,11 +235,8 @@ except Exception:
     echo "Model: $MEERA_LLAMACPP_GGUF"
     echo "Log: /tmp/llama_meera.log"
     # shellcheck disable=SC2086
-    # Disable Qwen-style “thinking” in the server (align with Ollama think: false). Override via MEERA_LLAMACPP_SERVER_EXTRA if needed.
-    _llama_think_off="--reasoning-budget 0"
     env LD_LIBRARY_PATH="${MEERA_LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       "$LLAMA_BIN" -m "$MEERA_LLAMACPP_GGUF" --host "$_LLAMA_HOST" --port "$_LLAMA_PORT" \
-      $_llama_think_off \
       $MEERA_LLAMACPP_SERVER_EXTRA >/tmp/llama_meera.log 2>&1 &
     _wait=0
     while [ "$_wait" -lt 30 ] && ! llama_server_reachable; do

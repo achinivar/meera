@@ -20,3 +20,15 @@ def stream_llm(messages: list) -> Iterator[str]:
     from backend import stream_llm as _run
 
     yield from _run(messages)
+
+
+def stream_llm_events(messages: list) -> Iterator[dict[str, str]]:
+    mode = os.environ.get("MEERA_BACKEND", "llamacpp").strip().lower()
+    if mode == "llamacpp":
+        from llamacpp_backend import stream_llm_events as _run
+
+        yield from _run(messages)
+        return
+    from backend import stream_llm_events as _run
+
+    yield from _run(messages)
