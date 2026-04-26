@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import tools.files as files_mod
+import tools.gsettings as gsettings_mod
 import tools.packages as packages_mod
 import tools.processes as processes_mod
 import tools.screenshot as screenshot_mod
@@ -45,6 +46,7 @@ def _collect_tools() -> list[ToolSpec]:
         *scheduler_mod.TOOLS,
         *screenshot_mod.TOOLS,
         *weather_mod.TOOLS,
+        *gsettings_mod.TOOLS,
     ]
     names = [t.name for t in merged]
     seen: set[str] = set()

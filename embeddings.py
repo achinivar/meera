@@ -23,6 +23,7 @@ import requests
 
 _FAKE_DIM = 384
 _DEFAULT_TIMEOUT = 30.0
+_DEFAULT_BATCH_SIZE = 128
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -43,6 +44,21 @@ def _model_name() -> str:
 
 def _fake_enabled() -> bool:
     return os.environ.get("MEERA_EMBED_FAKE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _batch_size() -> int:
+    """How many inputs to POST per /v1/embeddings request.
+
+    llama-server allocates a fixed parallel-slot / KV-cache budget at startup,
+    so very large single requests can exceed that budget and 500. Splitting
+    into chunks of this size keeps each request well within typical defaults
+    while still amortizing HTTP overhead. Override with MEERA_EMBED_BATCH_SIZE.
+    """
+    try:
+        n = int(os.environ.get("MEERA_EMBED_BATCH_SIZE", str(_DEFAULT_BATCH_SIZE)))
+    except ValueError:
+        return _DEFAULT_BATCH_SIZE
+    return max(1, n)
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -74,15 +90,8 @@ def _fake_embed_one(text: str) -> list[float]:
     return _l2_normalize(floats[:_FAKE_DIM])
 
 
-def embed_batch(texts: Iterable[str]) -> list[list[float]]:
-    """Return one L2-normalized vector per input text, in the same order."""
-    items = [t if isinstance(t, str) else str(t) for t in texts]
-    if not items:
-        return []
-
-    if _fake_enabled():
-        return [_fake_embed_one(t) for t in items]
-
+def _post_embed_chunk(items: list[str]) -> list[list[float]]:
+    """POST one chunk to /v1/embeddings and return one normalized vector per item."""
     url = f"{_base_url()}/v1/embeddings"
     payload = {"model": _model_name(), "input": items}
     try:
@@ -130,6 +139,28 @@ def embed_batch(texts: Iterable[str]) -> list[list[float]]:
     if any(v is None for v in out):
         raise EmbeddingUnavailableError("Embedding server returned incomplete batch")
     return out  # type: ignore[return-value]
+
+
+def embed_batch(texts: Iterable[str]) -> list[list[float]]:
+    """Return one L2-normalized vector per input text, in the same order.
+
+    Inputs are split into chunks of MEERA_EMBED_BATCH_SIZE (default 128) and
+    POSTed sequentially, then concatenated. This keeps each /v1/embeddings
+    request well within llama-server's parallel-slot budget regardless of how
+    many tools / RAG chunks the index has accumulated.
+    """
+    items = [t if isinstance(t, str) else str(t) for t in texts]
+    if not items:
+        return []
+
+    if _fake_enabled():
+        return [_fake_embed_one(t) for t in items]
+
+    chunk = _batch_size()
+    out: list[list[float]] = []
+    for start in range(0, len(items), chunk):
+        out.extend(_post_embed_chunk(items[start : start + chunk]))
+    return out
 
 
 def embed_one(text: str) -> list[float]:

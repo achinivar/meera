@@ -103,6 +103,27 @@ class TestFastpath(unittest.TestCase):
         self.assertEqual(match_fastpath("turn wifi off"), {"tool": "wifi_toggle", "params": {"state": "off"}})
         self.assertEqual(match_fastpath("enable wi-fi"), {"tool": "wifi_toggle", "params": {"state": "on"}})
 
+    def test_alt_tab_switch_windows_fastpath(self) -> None:
+        self.assertEqual(
+            match_fastpath("traditional alt tab"),
+            {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "traditional"}},
+        )
+        self.assertEqual(
+            match_fastpath("restore alt tab to default"),
+            {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "default"}},
+        )
+        self.assertEqual(
+            match_fastpath("ungroup alt tab"),
+            {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "traditional"}},
+        )
+        self.assertEqual(
+            match_fastpath("group alt tab by apps"),
+            {"tool": "gnome_alt_tab_switch_windows_mode", "params": {"mode": "default"}},
+        )
+
+    def test_titlebar_buttons_no_fastpath(self) -> None:
+        self.assertIsNone(match_fastpath("show minimize and maximize buttons on windows"))
+
     def test_clamps_volume_out_of_range(self) -> None:
         c = match_fastpath("set volume to 250")
         self.assertIsNotNone(c)

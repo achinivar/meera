@@ -3,7 +3,7 @@
 Meera is a local-only AI assistant prototype designed for GNOME desktops.  
 It streams chat from a local model using **[llama.cpp](https://github.com/ggml-org/llama.cpp)** `llama-server` (default) or **[Ollama](https://ollama.com/)**, and presents a native GTK4 chat UI.
 
-> ⚠️ **Prototype.** The chat UI runs **allowlisted laptop tools** when agent mode is on (default). Each user message goes through a **retrieval-first agent**: a heuristic fast-path catches obvious intents, otherwise an embedding index narrows down 2–4 candidate tools and pulls in any relevant `rag_data/*.md` snippets, then a **single** LLM call decides whether to call a tool (via llama.cpp native tool calling) or reply directly. Set **`MEERA_AGENT_TOOLS=0`** to disable tools and use plain chat only. See [`tools/README.md`](./tools/README.md), [`phases/Phase4_plan.md`](./phases/Phase4_plan.md), and the "Adding a tool" / "Adding RAG data" sections below.
+> ⚠️ **Prototype.** The chat UI runs **allowlisted laptop tools** when agent mode is on (default). Each user message goes through a **retrieval-first agent**: a heuristic fast-path catches obvious intents, otherwise an embedding index narrows down 2–4 candidate tools and pulls in any relevant `rag_data/*.md` snippets, then a **single** LLM call decides whether to call a tool (via llama.cpp native tool calling) or reply directly. Set **`MEERA_AGENT_TOOLS=0`** to disable tools and use plain chat only. See [`tools/README.md`](./tools/README.md), [`phases/Phase4_plan.md`](./phases/Phase4_plan.md), and the **Adding a tool**, **Adding a fast-path regex**, and **Adding RAG data** sections below.
 
 ---
 
@@ -34,13 +34,39 @@ Implementation: **`agent.py`** (`decide_turn` + `run_agent_turn` event generator
 3. **Add 5–10 `exemplars`** — natural-language phrases real users would type. These power retrieval; the test in `tests/test_tools.py::test_every_tool_has_exemplars` enforces a minimum.
 4. Register the spec by exporting it from your module and listing it in `tools/registry.py::TOOLS`.
 5. Restart Meera. The retrieval index is rebuilt at startup, so the new tool is immediately reachable.
-6. Optional: if the user's intent for this tool can be matched with a tight regex (e.g. `set X to N%`), add a fast-path entry to `_HEURISTIC_PATTERNS` in `agent.py` to skip the LLM entirely.
+
+## Adding a fast-path regex (optional)
+
+Use this when a tool’s trigger phrases are **narrow and structural** (fixed verbs, numbers, or tokens). The fast-path runs **before** retrieval and the LLM, so those utterances cost no embed call and no tool-selection tokens. It still **runs the tool** and uses the LLM to **summarize** the result; only retrieval and tool-choice for that turn are skipped.
+
+**When a fast-path is a good fit**
+
+- **High-frequency, repetitive phrasing** — The same intent shows up often (volume to N%, screenshot, time/date), so skipping embedding and tool retrieval is worthwhile.
+- **Parameters from the regex alone** — You can build `params` deterministically (percent digits, on/off, a bounded process name). Fuzzy timing or free-text (“remind me in a bit”) belongs in **exemplars + retrieval**, not regex.
+- **Low false-positive risk** — Patterns should not fire on normal chat; prefer specific or line-anchored regexes over loose substrings.
+- **Stable tool API** — Tool name and parameter shape are unlikely to change often; fast-path builders must be updated when they do.
+
+**When to skip the fast-path**
+
+- Rare actions, wide natural-language variation, or error-prone extraction.
+- Anything safety- or ambiguity-sensitive where you want retrieval + the LLM’s tool choice every time.
+
+Over-broad regexes will misfire on normal chat — when unsure, skip the fast-path and rely on **exemplars** only.
+
+All logic lives in **`agent.py`** under `# ---- Heuristic fast-path patterns`:
+
+1. **Add a builder function** — takes `m: re.Match[str]`, returns `{"tool": "your_tool_name", "params": {...}}`. Prefer **named capture groups** in the regex (`(?P<name>...)`) and read them with `m.group("name")`. Clamp or validate values; let invalid matches raise so the agent falls back to retrieval + LLM.
+2. **Append** `(r"…pattern…", _fp_your_builder)` to **`_HEURISTIC_PATTERNS`**. List order is the match order: **more specific patterns first**, broader patterns later (the first match wins; patterns use `re.IGNORECASE` and `search()` on the whole message).
+3. **Restart** Meera.
+4. **Test** — add cases under `TestFastpath` in `tests/test_agent.py`, or exercise the phrase manually with `MEERA_DEBUG_TOOL_CALLS=1` and confirm `stage=fastpath` in the debug line.
+
+See **`phases/Phase4_plan.md` §5** for the full design note and pitfalls.
 
 ## Adding RAG data
 
-1. Drop a Markdown file into `rag_data/` (lowercase filename, ending in `.md`). `README.md` in that folder is excluded from the index.
+1. Drop a Markdown file into `rag_data/` (lowercase filename, ending in `.md`). `README.md` in that folder is excluded from the index; every other `rag_data/*.md` file is chunked and indexed at startup (for example `software_recommendations.md`, `windows_macos_alternatives.md`).
 2. Use a single **H1** for the document title, and split the body with **H2** headings — each H2 becomes one retrievable chunk that includes the H1 title for context.
-3. Keep chunks small and self-contained (a few paragraphs or one fenced code example each); don't rely on H3+ as boundaries.
+3. Keep chunks small and self-contained (a few paragraphs or one fenced code example each); don't rely on H3+ as boundaries. The embedding model (`bge-small-en-v1.5`) has a hard **512-token input cap**, so any single H2 chunk must stay under that — long lists or tables should be split across multiple H2s, one topic per heading. `tests/test_retrieval.py::test_no_rag_chunk_exceeds_embedding_cap` enforces this.
 4. Restart Meera. `retrieval/rag_chunker.py` reads the directory, the index re-embeds, and the new chunks are now eligible to be inlined into the system prompt as `<KNOWLEDGE>` blocks when the user asks a related question.
 
 ---

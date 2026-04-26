@@ -6,8 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from datetime import datetime, timezone
+
+from tools.gsettings import _build_titlebar_layout
 from tools.registry import TOOLS, get_tool, tools_prompt_catalog_json
+from tools.scheduler import _build_vevent_ics_document, _ics_text_escape
 from tools.runner import run_tool
+from tools.schema import ToolResult
 
 
 class TestRegistry(unittest.TestCase):
@@ -94,6 +99,70 @@ class TestRunner(unittest.TestCase):
             assert r.data is not None
             home = str(Path.home().resolve())
             self.assertTrue(str(r.data.get("path", "")).startswith(home))
+
+
+class TestGnomeCalendarIcs(unittest.TestCase):
+    def test_ics_escape_commas_and_newlines(self) -> None:
+        self.assertEqual(_ics_text_escape("a, b"), "a\\, b")
+        self.assertIn("\\n", _ics_text_escape("line1\nline2"))
+
+    def test_vevent_document_dtstart_duration(self) -> None:
+        dt = datetime(2024, 5, 1, 9, 0, tzinfo=timezone.utc)
+        doc = _build_vevent_ics_document("Meeting", dt, 60)
+        self.assertIn("BEGIN:VCALENDAR\r\n", doc)
+        self.assertIn("SUMMARY:Meeting\r\n", doc)
+        self.assertIn("DTSTART:20240501T090000Z\r\n", doc)
+        self.assertIn("DURATION:PT1H\r\n", doc)
+        self.assertIn("END:VCALENDAR", doc)
+
+    def test_duration_minutes_not_whole_hours(self) -> None:
+        dt = datetime(2024, 5, 1, 9, 0, tzinfo=timezone.utc)
+        doc = _build_vevent_ics_document("Quick", dt, 45)
+        self.assertIn("DURATION:PT45M", doc)
+
+
+class TestGnomeTitlebarLayout(unittest.TestCase):
+    """Parsing for gnome_titlebar_button_layout_set (no gsettings I/O)."""
+
+    def test_default_when_both_none(self) -> None:
+        layout = _build_titlebar_layout(None, None)
+        self.assertEqual(layout, "appmenu:minimize,maximize,close")
+
+    def test_only_right(self) -> None:
+        layout = _build_titlebar_layout(None, "close")
+        self.assertEqual(layout, ":close")
+        layout2 = _build_titlebar_layout(None, "close,minimize,maximize")
+        self.assertEqual(layout2, ":close,minimize,maximize")
+
+    def test_only_left(self) -> None:
+        layout = _build_titlebar_layout("appmenu", None)
+        self.assertEqual(layout, "appmenu:")
+
+    def test_custom_order(self) -> None:
+        layout = _build_titlebar_layout("appmenu", "close,minimize,maximize")
+        self.assertEqual(layout, "appmenu:close,minimize,maximize")
+
+    def test_omit_some_buttons(self) -> None:
+        layout = _build_titlebar_layout(None, "minimize,close")
+        self.assertEqual(layout, ":minimize,close")
+
+    def test_empty_explicit_both_invalid(self) -> None:
+        out = _build_titlebar_layout("", "")
+        self.assertIsInstance(out, ToolResult)
+        assert isinstance(out, ToolResult)
+        self.assertFalse(out.ok)
+
+    def test_unknown_token(self) -> None:
+        out = _build_titlebar_layout(None, "quit")
+        self.assertIsInstance(out, ToolResult)
+        assert isinstance(out, ToolResult)
+        self.assertFalse(out.ok)
+
+    def test_duplicate_across_sides(self) -> None:
+        out = _build_titlebar_layout("close", "minimize,close")
+        self.assertIsInstance(out, ToolResult)
+        assert isinstance(out, ToolResult)
+        self.assertFalse(out.ok)
 
 
 if __name__ == "__main__":

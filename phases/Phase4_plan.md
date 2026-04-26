@@ -98,17 +98,35 @@ Replace the bulk of [agent.py](../agent.py) (the route + selector prompts, dual-
 
 ### 5. Heuristic fast-path
 
-A small dispatcher in `agent.py` for unambiguous intents:
+A small dispatcher in [agent.py](../agent.py) (`match_fastpath`, `_HEURISTIC_PATTERNS`) for **unambiguous** intents: volume/brightness percentages, mute/unmute, screenshot, date/time questions, “is X running?”, Wi‑Fi on/off, and a lone `ping`. Patterns are tried **in list order**; the **first** regex match wins. Each pattern is compiled with `re.IGNORECASE` and applied with `search()` on the full user message (substring match).
 
-| Pattern (regex) | Tool | Why |
-|---|---|---|
-| `set volume to (\d{1,3})\s*%?` | `volume_set_percent` | Trivially structured |
-| `(turn\|set) volume (up\|down) by (\d+)` | `volume_adjust` | |
-| `take a screenshot` | `screenshot_save` | |
-| `is (\w+) running` | `process_check_running` | |
-| `(what'?s )?the time` | `datetime_query` | |
+This runs **before** embedding retrieval and the LLM, so hits cost no tokens and no embed server round-trip. A hit still **executes `run_tool`** and performs a follow-up LLM call to **summarize** the tool result; only embedding, retrieval, and the first-pass tool selection are skipped.
 
-~10 patterns total. Catches the easy ~30% of usage with zero LLM cost and zero failure rate.
+#### When it makes sense to add a fast-path
+
+- **Common, tight utterances** — The intent shows up often with similar wording, so avoiding embed + candidate-tool ranking is a real win.
+- **Deterministic parameters** — The regex can populate `params` reliably (digits → percent, fixed enums, bounded identifiers). If the user’s wording needs interpretation (“soon”, “a while”), use **exemplars + retrieval** instead of a fast-path.
+- **Low false-positive rate** — The pattern must not match casual chat. Prefer narrower or anchored patterns (e.g. a message that is only `ping`) over broad `search()` substrings.
+- **Accepting maintenance cost** — New synonyms may need new regex lines or reordering; **list order is match order** (first win), so conflicts require careful placement.
+
+#### When to skip a fast-path
+
+- Infrequent tools, rich paraphrase variety, or fragile extraction.
+- Security- or policy-sensitive actions where you want retrieval and the LLM’s tool choice on every relevant turn.
+
+#### How to add or change a fast-path pattern
+
+1. **Open** [agent.py](../agent.py) and find `# ---- Heuristic fast-path patterns` (builders like `_fp_volume_set`, then `_HEURISTIC_PATTERNS`).
+2. **Add a builder** — a function `def _fp_your_name(m: re.Match[str]) -> dict[str, Any]` that returns exactly  
+   `{"tool": "<registered_tool_name>", "params": {...}}`.  
+   Use **named groups** in the regex, e.g. `(?P<pct>\d+)`, and read them with `m.group("pct")`. Normalize/clamp values (see `_fp_volume_set`). On bad captures, raise `ValueError` / `KeyError` so `match_fastpath` skips and falls through to retrieval + LLM.
+3. **Append** a tuple `(r"your_regex_here", _fp_your_name)` to `_HEURISTIC_PATTERNS`.  
+   **Order matters:** put **more specific** patterns **above** broader ones so a loose regex does not steal matches.
+4. **Restart** Meera (or reload the process). There is no separate config file.
+5. **Add a unit test** in [tests/test_agent.py](../tests/test_agent.py) (`TestFastpath`) with 1–2 utterances that must hit your pattern and assert `tool` / `params`.
+6. **Guidelines:** Only fast-path phrasings that are **structurally obvious**; avoid regexes that match normal chit-chat (“hi”, “ok”, “what can you do”). If in doubt, rely on **exemplars + retrieval** instead. See **When it makes sense to add a fast-path** / **When to skip a fast-path** above.
+
+The live list of patterns is the `_HEURISTIC_PATTERNS` table in code; keep this plan’s narrative in sync when you add major categories.
 
 ### 6. UI integration
 
@@ -175,6 +193,7 @@ sequenceDiagram
 4. **Register the module** in [tools/registry.py](../tools/registry.py) (`*module_mod.TOOLS` in `_collect_tools`) if it's a brand-new module. Existing modules need no change.
 5. **Run unit tests:** `python3 -m unittest discover -s tests -v`. The retrieval-completeness test confirms exemplars exist; the registry uniqueness test confirms the name doesn't collide.
 6. **Smoke test:** restart Meera. The startup log should print "Indexed N tool exemplars across M tools". Try 3–5 paraphrasings of the new intent in the chat to confirm retrieval finds them.
+7. **Optional fast-path:** if a few fixed phrases cover most usage (e.g. `set X to N%`), add a regex + builder to `_HEURISTIC_PATTERNS` as described in **§5 — Heuristic fast-path** above.
 
 That's it — no prompt changes, no router-keyword updates, no separate exemplar file to keep in sync. The current agent's per-category routing tables (`tool_to_type` map and category catalogs in [agent.py](../agent.py)) **disappear**, which is the main maintainability win.
 
