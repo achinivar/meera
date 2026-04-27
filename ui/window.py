@@ -51,6 +51,10 @@ class MeeraWindow(Gtk.Window):
         # Conversation history for context
         self.conversation_history = []
         self._streaming_message_active = False
+        self._streaming_body_start_mark = None
+        self._streaming_render_buffer = ""
+        self._streaming_render_dirty = False
+        self._streaming_refresh_active = False
         self._typing_start_mark = None
         self._typing_end_mark = None
 
@@ -402,16 +406,57 @@ class MeeraWindow(Gtk.Window):
             return False
         if not self._streaming_message_active:
             self._clear_typing_indicator()
-            self._append_text("Meera: ")
+            self._insert_with_tags("Meera: ", [self.text_tag, self.bold_tag])
+            self._streaming_body_start_mark = self.chat_buf.create_mark(None, self.chat_buf.get_end_iter(), True)
             self._streaming_message_active = True
-        self._append_text(chunk)
+            self._streaming_render_buffer = ""
+            self._streaming_render_dirty = False
+            self._ensure_streaming_refresh_timer()
+        self._streaming_render_buffer += chunk
+        self._streaming_render_dirty = True
         return False
 
-    def _finish_streaming_message_line(self):
+    def _finish_streaming_message_line(self, full_response: str | None = None):
         if self._streaming_message_active:
-            self._append_text("\n\n")
+            if isinstance(full_response, str):
+                self._streaming_render_buffer = full_response
+                self._streaming_render_dirty = True
+            self._refresh_streaming_message_preview()
+            self._insert_with_tags("\n\n", [self.text_tag])
+            mark = self.chat_buf.create_mark(None, self.chat_buf.get_end_iter(), False)
+            self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
             self._streaming_message_active = False
+        self._streaming_render_buffer = ""
+        self._streaming_render_dirty = False
+        if self._streaming_body_start_mark is not None:
+            self.chat_buf.delete_mark(self._streaming_body_start_mark)
+            self._streaming_body_start_mark = None
         return False
+
+    def _ensure_streaming_refresh_timer(self):
+        if self._streaming_refresh_active:
+            return
+        self._streaming_refresh_active = True
+        GLib.timeout_add(100, self._streaming_refresh_tick)
+
+    def _streaming_refresh_tick(self):
+        if not self._streaming_message_active:
+            self._streaming_refresh_active = False
+            return False
+        self._refresh_streaming_message_preview()
+        return True
+
+    def _refresh_streaming_message_preview(self):
+        if not self._streaming_render_dirty or self._streaming_body_start_mark is None:
+            return
+        buf = self.chat_buf
+        start_iter = buf.get_iter_at_mark(self._streaming_body_start_mark)
+        end_iter = buf.get_end_iter()
+        buf.delete(start_iter, end_iter)
+        self._insert_markdown(self._streaming_render_buffer)
+        self._streaming_render_dirty = False
+        mark = buf.create_mark(None, buf.get_end_iter(), False)
+        self.chat_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
 
     def _insert_with_tags(self, text: str, tags: list[Gtk.TextTag]):
         if not text:
@@ -478,7 +523,7 @@ class MeeraWindow(Gtk.Window):
 
         for line in lines:
             stripped = line.rstrip("\n")
-            if stripped.startswith("```"):
+            if stripped.lstrip().startswith("```"):
                 in_code_block = not in_code_block
                 continue
 
@@ -675,7 +720,7 @@ class MeeraWindow(Gtk.Window):
             if not self.cancel_stream:
                 if full_response:
                     self.conversation_history.append({"role": "assistant", "content": full_response})
-                GLib.idle_add(self._finish_streaming_message_line)
+                GLib.idle_add(self._finish_streaming_message_line, full_response)
         finally:
             GLib.idle_add(self._stream_finished)
 
@@ -756,7 +801,7 @@ class MeeraWindow(Gtk.Window):
                     self.conversation_history.append({"role": "assistant", "content": mm})
                 if full_response:
                     self.conversation_history.append({"role": "assistant", "content": full_response})
-                GLib.idle_add(self._finish_streaming_message_line)
+                GLib.idle_add(self._finish_streaming_message_line, full_response)
         finally:
             GLib.idle_add(self._stream_finished)
 
