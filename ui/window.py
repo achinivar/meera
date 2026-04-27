@@ -16,6 +16,7 @@ except (ValueError, ImportError):
     ADW_AVAILABLE = False
 
 import threading
+from retrieval import get_index
 from inference import stream_llm
 from history import save_session, list_sessions, load_session
 
@@ -215,6 +216,9 @@ class MeeraWindow(Gtk.Window):
         
         # Initial greeting after UI is ready
         GLib.idle_add(self._initial_greeting)
+
+        # Warm retrieval index in background so first prompt is faster.
+        self._start_retrieval_prewarm()
 
     # ---------- theme detection and styling ----------
     
@@ -535,7 +539,7 @@ class MeeraWindow(Gtk.Window):
         start_iter = buf.get_end_iter()
         self._typing_start_mark = buf.create_mark(None, start_iter, True)
         self._insert_with_tags("Meera: ", [self.text_tag, self.bold_tag])
-        self._insert_with_tags("Meera is typing...", [self.text_tag, self.italic_tag])
+        self._insert_with_tags("Thinking...", [self.text_tag, self.italic_tag])
         self._insert_with_tags("\n\n", [self.text_tag])
         end_iter = buf.get_end_iter()
         self._typing_end_mark = buf.create_mark(None, end_iter, False)
@@ -558,6 +562,16 @@ class MeeraWindow(Gtk.Window):
 
     def _set_button_state(self, streaming: bool):
         self.send_button.set_label("⏹" if streaming else "↑")
+
+    def _start_retrieval_prewarm(self):
+        def _worker():
+            try:
+                get_index()
+            except Exception:
+                # Best-effort warmup only; runtime retrieval will gracefully degrade.
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _initial_greeting(self):
         welcome = "Hi, I'm Meera. How can I help you today?"
