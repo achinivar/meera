@@ -75,6 +75,16 @@ MEERA_SHA_LLAMA_UBUNTU_X64="e5274949bd1d94882454abdc9b131cf3e250678026de30fa3b36
 MEERA_SHA_LLAMA_UBUNTU_ARM64="2306d31bb232b604fc0478e6c2cf1a673aab8cdcdc782925fed2d7eb51afa825"
 MEERA_SHA_LLAMA_OE_X86="cfde7b3bc243a7105a9a9773d78d5635ff446b2a4397d2386d848ff83c637866"
 MEERA_SHA_LLAMA_OE_AARCH64="fe75fbdc34214e08ec476430932f6316e46e3d36ed56498628a1a18160537129"
+# Vulkan bundles ship as .tar.gz release assets.
+# Values from GitHub release API digest field.
+MEERA_SHA_LLAMA_UBUNTU_VULKAN_X64="${MEERA_SHA_LLAMA_UBUNTU_VULKAN_X64:-3832d9fade4aa7b36d4095f5a84fefe7f5849c4bde53f9a60857a029897930b1}"
+MEERA_SHA_LLAMA_UBUNTU_VULKAN_ARM64="${MEERA_SHA_LLAMA_UBUNTU_VULKAN_ARM64:-fc7b913426030c49fbb16a44f1e06ed8391eba80a7409fc5107c1472e6838265}"
+
+# GPU mode for llama.cpp bundles:
+#   auto   -> prefer Vulkan when a render node is present; fallback to CPU
+#   vulkan -> force Vulkan bundle
+#   cpu    -> force CPU bundle
+MEERA_GPU="${MEERA_GPU:-auto}"
 
 # Default GGUF: same family as Ollama qwen3.5:2b-q4_K_M — Unsloth Q4_K_M on Hugging Face.
 MEERA_DEFAULT_GGUF_NAME="Qwen3.5-2B-Q4_K_M.gguf"
@@ -88,8 +98,15 @@ MEERA_EMBED_DEFAULT_GGUF_URL="https://huggingface.co/CompendiumLabs/bge-small-en
 if [ "${MEERA_BACKEND:-llamacpp}" = "llamacpp" ]; then
   echo "MEERA_BACKEND=llamacpp — skipping Ollama install/serve/pull."
 
-  # Download official llama.cpp CPU bundle (Ubuntu tarball for apt/Debian; openEuler tarball for dnf/Fedora).
-  meera_ensure_llama_bundle() {
+  meera_has_render_node() {
+    [ -e /dev/dri/renderD128 ] || [ -e /dev/dri/renderD129 ] || [ -e /dev/dri/renderD130 ]
+  }
+
+  # Download official llama.cpp bundle.
+  # Args:
+  #   $1 backend: cpu | vulkan
+  meera_ensure_llama_bundle_for() {
+    _requested_backend="${1:-cpu}"
     _uarch="$(uname -m)"
     case "$_uarch" in
       x86_64) _larch=x86_64 ;;
@@ -97,10 +114,28 @@ if [ "${MEERA_BACKEND:-llamacpp}" = "llamacpp" ]; then
       *)
         echo "Unsupported CPU for bundled llama-server: $_uarch"
         echo "Use MEERA_BACKEND=ollama, or an x86_64 / aarch64 Linux system with apt or dnf."
-        exit 1
+        return 1
         ;;
     esac
-    if [ "$PKG_MANAGER" = "dnf" ]; then
+    if [ "$_requested_backend" = "vulkan" ]; then
+      if [ "$PKG_MANAGER" = "dnf" ]; then
+        echo "Vulkan bundle is currently configured for Ubuntu assets only; package manager is dnf."
+        return 1
+      fi
+      _lfam=ubuntu
+      case "$_larch" in
+        x86_64)
+          _lbun="llama-${MEERA_LLAMA_CPP_TAG}-bin-ubuntu-vulkan-x64.tar.gz"
+          _lsha="$MEERA_SHA_LLAMA_UBUNTU_VULKAN_X64"
+          _lid=ubuntu-vulkan-x64
+          ;;
+        aarch64)
+          _lbun="llama-${MEERA_LLAMA_CPP_TAG}-bin-ubuntu-vulkan-arm64.tar.gz"
+          _lsha="$MEERA_SHA_LLAMA_UBUNTU_VULKAN_ARM64"
+          _lid=ubuntu-vulkan-arm64
+          ;;
+      esac
+    elif [ "$PKG_MANAGER" = "dnf" ]; then
       _lfam=openEuler
       case "$_larch" in
         x86_64)
@@ -140,9 +175,10 @@ if [ "${MEERA_BACKEND:-llamacpp}" = "llamacpp" ]; then
       echo "Using cached llama.cpp bundle: $_lbindir"
       _meera_llama_server="$_lbindir/llama-server"
       MEERA_LLAMA_LIB_DIR="$_lbindir"
+      _meera_llama_backend="$_requested_backend"
       return 0
     fi
-    section "Downloading llama-server bundle ($MEERA_LLAMA_CPP_TAG, ${_lfam} ${_lid})"
+    section "Downloading llama-server bundle ($MEERA_LLAMA_CPP_TAG, ${_lfam} ${_lid}, backend=${_requested_backend})"
     mkdir -p "$_lst"
     _lurl="${MEERA_LLAMA_DL_BASE}/${_lbun}"
     echo "URL: $_lurl"
@@ -151,22 +187,64 @@ if [ "${MEERA_BACKEND:-llamacpp}" = "llamacpp" ]; then
       echo "curl is required to download the llama.cpp bundle."
       exit 1
     fi
-    curl -fL --retry 3 -C - --proto '=https' -o "$_lpart" "$_lurl"
-    mv -f "$_lpart" "$_larc"
-    printf '%s  %s\n' "$_lsha" "$_larc" | sha256sum -c - || {
-      echo "SHA256 mismatch for $_larc — remove the file and retry, or bump MEERA_LLAMA_CPP_TAG / checksums in run_meera.sh."
-      rm -f "$_larc"
-      exit 1
+    curl -fL --retry 3 -C - --proto '=https' -o "$_lpart" "$_lurl" || {
+      echo "Download failed: $_lurl"
+      rm -f "$_lpart"
+      return 1
     }
+    mv -f "$_lpart" "$_larc"
+    _lsha_clean="${_lsha#sha256:}"
+    if [ -n "$_lsha_clean" ]; then
+      printf '%s  %s\n' "$_lsha_clean" "$_larc" | sha256sum -c - || {
+        echo "SHA256 mismatch for $_larc — remove the file and retry, or bump MEERA_LLAMA_CPP_TAG / checksums in run_meera.sh."
+        rm -f "$_larc"
+        return 1
+      }
+    else
+      echo "Warning: no SHA256 configured for $_lbun; skipping checksum validation."
+    fi
     rm -rf "$_lex"
     mkdir -p "$_lex"
     tar xzf "$_larc" -C "$_lex"
     if [ ! -x "$_lbindir/llama-server" ]; then
       echo "Extracted bundle missing executable: $_lbindir/llama-server"
-      exit 1
+      return 1
     fi
     _meera_llama_server="$_lbindir/llama-server"
     MEERA_LLAMA_LIB_DIR="$_lbindir"
+    _meera_llama_backend="$_requested_backend"
+    return 0
+  }
+
+  meera_ensure_llama_bundle() {
+    _gpu_mode="$(printf '%s' "${MEERA_GPU:-auto}" | tr '[:upper:]' '[:lower:]')"
+    case "$_gpu_mode" in
+      auto | vulkan | cpu) ;;
+      *)
+        echo "Invalid MEERA_GPU='${MEERA_GPU}'. Use auto, vulkan, or cpu."
+        exit 1
+        ;;
+    esac
+    if [ "$_gpu_mode" = "cpu" ]; then
+      meera_ensure_llama_bundle_for cpu || exit 1
+      return 0
+    fi
+    if [ "$_gpu_mode" = "vulkan" ]; then
+      meera_ensure_llama_bundle_for vulkan || exit 1
+      return 0
+    fi
+
+    # auto mode: prefer Vulkan when a render node is present; otherwise CPU.
+    if meera_has_render_node; then
+      echo "MEERA_GPU=auto: render node detected, trying Vulkan llama.cpp bundle."
+      if meera_ensure_llama_bundle_for vulkan; then
+        return 0
+      fi
+      echo "Vulkan bundle failed; falling back to CPU bundle."
+    else
+      echo "MEERA_GPU=auto: no render node detected, using CPU bundle."
+    fi
+    meera_ensure_llama_bundle_for cpu || exit 1
   }
 
   LLAMA_BASE="${MEERA_LLAMACPP_URL:-http://127.0.0.1:8080}"
@@ -237,6 +315,15 @@ except Exception:
     fi
     section "Starting llama-server"
     echo "Model: $MEERA_LLAMACPP_GGUF"
+    _chat_ngl="${MEERA_LLAMACPP_NGL:-}"
+    if [ -z "$_chat_ngl" ]; then
+      if [ "${_meera_llama_backend:-cpu}" = "vulkan" ]; then
+        _chat_ngl=99
+      else
+        _chat_ngl=0
+      fi
+    fi
+    echo "Backend: ${_meera_llama_backend:-cpu}, chat -ngl=${_chat_ngl}"
     echo "Log: /tmp/llama_meera.log"
     # One server slot (default llama-server is --parallel auto → 4): sequential turns
     # reuse the same slot/KV cache instead of LRU-picking an empty slot and paying full
@@ -245,6 +332,7 @@ except Exception:
     # shellcheck disable=SC2086
     env LD_LIBRARY_PATH="${MEERA_LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       "$LLAMA_BIN" -m "$MEERA_LLAMACPP_GGUF" --host "$_LLAMA_HOST" --port "$_LLAMA_PORT" \
+      -ngl "$_chat_ngl" \
       --parallel 1 \
       $MEERA_LLAMACPP_SERVER_EXTRA >/tmp/llama_meera.log 2>&1 &
     _wait=0
@@ -330,9 +418,12 @@ except Exception:
       fi
       section "Starting embedding llama-server"
       echo "Model: $MEERA_EMBED_GGUF"
+      _embed_ngl="${MEERA_EMBED_NGL:-0}"
+      echo "Backend: ${_meera_llama_backend:-cpu}, embedding -ngl=${_embed_ngl}"
       echo "Log: /tmp/llama_meera_embed.log"
       env LD_LIBRARY_PATH="${MEERA_LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         "$LLAMA_BIN" -m "$MEERA_EMBED_GGUF" --host "$_EMBED_HOST" --port "$_EMBED_PORT" \
+        -ngl "$_embed_ngl" \
         --embeddings -c 512 \
         >/tmp/llama_meera_embed.log 2>&1 &
       _ewait=0
