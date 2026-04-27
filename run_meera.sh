@@ -238,9 +238,14 @@ except Exception:
     section "Starting llama-server"
     echo "Model: $MEERA_LLAMACPP_GGUF"
     echo "Log: /tmp/llama_meera.log"
+    # One server slot (default llama-server is --parallel auto → 4): sequential turns
+    # reuse the same slot/KV cache instead of LRU-picking an empty slot and paying full
+    # prompt prefill. To use more slots, pass --parallel N in MEERA_LLAMACPP_SERVER_EXTRA
+    # (llama-server uses the last --parallel value if specified twice).
     # shellcheck disable=SC2086
     env LD_LIBRARY_PATH="${MEERA_LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       "$LLAMA_BIN" -m "$MEERA_LLAMACPP_GGUF" --host "$_LLAMA_HOST" --port "$_LLAMA_PORT" \
+      --parallel 1 \
       $MEERA_LLAMACPP_SERVER_EXTRA >/tmp/llama_meera.log 2>&1 &
     _wait=0
     while [ "$_wait" -lt 30 ] && ! llama_server_reachable; do

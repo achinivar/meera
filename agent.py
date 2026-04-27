@@ -79,9 +79,9 @@ def _retrieval_top_k_tools() -> int:
 
 def _retrieval_top_k_rag() -> int:
     try:
-        return max(0, min(6, int(os.environ.get("MEERA_RETRIEVAL_K_RAG", "3"))))
+        return max(0, min(6, int(os.environ.get("MEERA_RETRIEVAL_K_RAG", "2"))))
     except ValueError:
-        return 3
+        return 2
 
 
 def _retrieval_tool_threshold() -> float:
@@ -96,6 +96,14 @@ def _retrieval_rag_threshold() -> float:
         return float(os.environ.get("MEERA_RETRIEVAL_RAG_THRESHOLD", "0.35"))
     except ValueError:
         return 0.35
+
+
+def _retrieval_tool_margin() -> float:
+    """Minimum score advantage top-tool needs over top-rag to select llm_tools."""
+    try:
+        return float(os.environ.get("MEERA_RETRIEVAL_TOOL_MARGIN", "0.08"))
+    except ValueError:
+        return 0.08
 
 
 # ---- Heuristic fast-path patterns ------------------------------------------
@@ -393,10 +401,26 @@ def decide_turn(user_text: str) -> TurnPlan:
     rag_hits = result.rag
 
     if candidate_tools:
+        top_tool = result.tools[0].score if result.tools else float("-inf")
+        top_rag = rag_hits[0].score if rag_hits else float("-inf")
+        margin = _retrieval_tool_margin()
+        tools_win = (not rag_hits) or (top_tool >= (top_rag + margin))
+        if _debug_tools_enabled():
+            _debug_tool(
+                "router "
+                f"top_tool={top_tool:.3f} top_rag={(top_rag if rag_hits else float('nan')):.3f} "
+                f"margin={margin:.3f} tools_win={tools_win}"
+            )
+        if not tools_win:
+            return TurnPlan(
+                kind="llm_chat",
+                rag_hits=rag_hits,
+                retrieval_query=user_text,
+            )
         return TurnPlan(
             kind="llm_tools",
             candidate_tools=candidate_tools,
-            rag_hits=rag_hits,
+            rag_hits=[],
             retrieval_query=user_text,
         )
     return TurnPlan(
