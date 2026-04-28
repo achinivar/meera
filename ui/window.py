@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import shutil
+import subprocess
 import gi  # type: ignore
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -110,6 +112,24 @@ class MeeraWindow(Gtk.Window):
         history_item.connect("clicked", lambda btn: (popover.popdown(), self._on_history_clicked()))
         history_item.set_halign(Gtk.Align.FILL)
         menu_box.append(history_item)
+
+        # Auto-start toggle menu item
+        self.autostart_item = Gtk.Button(label="")
+        self.autostart_item.connect(
+            "clicked",
+            lambda btn: (popover.popdown(), self._on_autostart_toggle_clicked()),
+        )
+        self.autostart_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(self.autostart_item)
+        self._refresh_autostart_menu_label()
+
+        shortcut_item = Gtk.Button(label="Keyboard Shortcut")
+        shortcut_item.connect(
+            "clicked",
+            lambda btn: (popover.popdown(), self._on_keyboard_shortcut_clicked()),
+        )
+        shortcut_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(shortcut_item)
         
         # Separator
         separator = Gtk.Separator()
@@ -120,6 +140,11 @@ class MeeraWindow(Gtk.Window):
         about_item.connect("clicked", lambda btn: (popover.popdown(), self._on_about_clicked()))
         about_item.set_halign(Gtk.Align.FILL)
         menu_box.append(about_item)
+
+        quit_item = Gtk.Button(label="Quit Meera")
+        quit_item.connect("clicked", lambda btn: (popover.popdown(), self._on_quit_clicked()))
+        quit_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(quit_item)
         
         # Add menu button to header bar (on the left, before title)
         header_bar.pack_start(menu_button)
@@ -1009,6 +1034,197 @@ class MeeraWindow(Gtk.Window):
         vbox.append(close_button)
 
         about_window.present()
+
+    def _autostart_file_path(self) -> str:
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return os.path.join(xdg_config_home, "autostart", "meera.desktop")
+
+    def _desktop_file_path(self) -> str:
+        xdg_data_home = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+        return os.path.join(xdg_data_home, "applications", "local.meera.Meera.desktop")
+
+    def _is_autostart_enabled(self) -> bool:
+        return os.path.isfile(self._autostart_file_path())
+
+    def _refresh_autostart_menu_label(self) -> None:
+        if self._is_autostart_enabled():
+            self.autostart_item.set_label("Disable auto-start")
+        else:
+            self.autostart_item.set_label("Enable auto-start")
+
+    def _on_autostart_toggle_clicked(self, button=None):
+        autostart_file = self._autostart_file_path()
+        try:
+            if self._is_autostart_enabled():
+                os.remove(autostart_file)
+                self._append_message_line("Meera", "Auto-start disabled.")
+            else:
+                os.makedirs(os.path.dirname(autostart_file), exist_ok=True)
+                desktop_file = self._desktop_file_path()
+                if os.path.isfile(desktop_file):
+                    shutil.copyfile(desktop_file, autostart_file)
+                else:
+                    launcher = os.path.expanduser("~/.local/bin/meera")
+                    with open(autostart_file, "w", encoding="utf-8") as handle:
+                        handle.write(
+                            "[Desktop Entry]\n"
+                            "Type=Application\n"
+                            "Name=Meera\n"
+                            "Comment=Local GNOME AI Assistant\n"
+                            f"Exec={launcher}\n"
+                            "Icon=meera\n"
+                            "Terminal=false\n"
+                            "Categories=Utility;GTK;\n"
+                            "StartupNotify=true\n"
+                        )
+                self._append_message_line("Meera", "Auto-start enabled.")
+        except OSError as exc:
+            self._append_message_line("Meera", f"Could not update auto-start: {exc}")
+
+        self._refresh_autostart_menu_label()
+
+    def _keyboard_shortcut_helper_path(self) -> str:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, "scripts", "keyboard_shortcut.py")
+
+    def _shortcut_modifiers(self, state):
+        return state & (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.SHIFT_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK
+            | Gdk.ModifierType.HYPER_MASK
+            | Gdk.ModifierType.META_MASK
+        )
+
+    def _set_keyboard_shortcut(self, binding: str) -> tuple[bool, str]:
+        helper = self._keyboard_shortcut_helper_path()
+        launcher = os.path.expanduser("~/.local/bin/meera")
+        if not os.path.isfile(helper):
+            return False, "Keyboard shortcut helper is missing."
+        result = subprocess.run(
+            ["python3", helper, "set", binding, launcher],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, f"Keyboard shortcut set to {binding}."
+        message = (result.stderr or result.stdout or "Could not set keyboard shortcut.").strip()
+        return False, message
+
+    def _on_keyboard_shortcut_clicked(self, button=None):
+        shortcut_window = Gtk.Window()
+        shortcut_window.set_title("Keyboard Shortcut")
+        shortcut_window.set_modal(True)
+        shortcut_window.set_transient_for(self)
+        shortcut_window.set_default_size(420, 180)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        shortcut_window.set_child(vbox)
+
+        message = Gtk.Label(label="Press the keyboard shortcut you want to use for Meera.")
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        detail = Gtk.Label(label="Use at least one modifier key, such as Ctrl, Alt, or Super.")
+        detail.set_wrap(True)
+        detail.set_xalign(0)
+        detail.add_css_class("dim-label")
+        vbox.append(detail)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        close_button = Gtk.Button(label="Close")
+        close_button.connect("clicked", lambda btn: shortcut_window.close())
+        button_box.append(close_button)
+
+        def on_key_pressed(controller, keyval, keycode, state):
+            modifiers = self._shortcut_modifiers(state)
+            if not Gtk.accelerator_valid(keyval, modifiers):
+                detail.set_text("That shortcut is not valid. Try another one.")
+                return True
+            binding = Gtk.accelerator_name(keyval, modifiers)
+            ok, result_message = self._set_keyboard_shortcut(binding)
+            if ok:
+                detail.set_text(result_message)
+                GLib.timeout_add(900, lambda: (shortcut_window.close(), False)[1])
+            else:
+                detail.set_text(f"{result_message} Try a different shortcut.")
+            return True
+
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", on_key_pressed)
+        shortcut_window.add_controller(key_controller)
+        shortcut_window.present()
+
+    def _on_quit_clicked(self, button=None):
+        """Confirm quit, then stop local model servers and close Meera."""
+        confirm_window = Gtk.Window()
+        confirm_window.set_title("Quit Meera?")
+        confirm_window.set_modal(True)
+        confirm_window.set_transient_for(self)
+        confirm_window.set_default_size(380, 160)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        confirm_window.set_child(vbox)
+
+        message = Gtk.Label(
+            label="Quit Meera and stop the local model servers?"
+        )
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        cancel_button = Gtk.Button(label="Cancel")
+        cancel_button.connect("clicked", lambda btn: confirm_window.close())
+        button_box.append(cancel_button)
+
+        quit_button = Gtk.Button(label="Quit Meera")
+        quit_button.add_css_class("destructive-action")
+        quit_button.connect("clicked", lambda btn: self._confirm_quit(confirm_window))
+        button_box.append(quit_button)
+
+        confirm_window.present()
+
+    def _confirm_quit(self, confirm_window):
+        confirm_window.close()
+        self.cancel_stream = True
+        if self.conversation_history:
+            save_session(self.conversation_history)
+        self._stop_installed_model_servers()
+        self.close()
+
+    def _stop_installed_model_servers(self):
+        launcher = os.path.expanduser("~/.local/bin/meera")
+        if not os.path.exists(launcher) or not os.access(launcher, os.X_OK):
+            return
+        try:
+            subprocess.run(
+                [launcher, "unload-model"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+            )
+        except Exception:
+            # Quitting the UI should not be blocked by cleanup failures.
+            return
 
     # ---------- window lifecycle ----------
 
