@@ -2,13 +2,19 @@
 
 Meera is a local-first AI assistant for Linux GNOME desktops. It provides a native GTK4 chat UI, uses `llama.cpp` model servers locally, and includes optional allowlisted desktop tools through a retrieval-first agent loop.
 
+<div align="center">
+
+<img src="./assets/meera_bg.png" alt="Meera desktop assistant" width="780">
+
+</div>
+
 ## Overview
 
 - Native GTK4 desktop app, designed for GNOME
 - Local `llama.cpp` chat + embedding servers managed by the launcher
 - Streaming chat responses with Markdown rendering
-- Built-in chat history with load/new-chat actions
 - Optional tool-enabled assistant mode (`MEERA_AGENT_TOOLS=1`, default)
+- Answers Linux questions using RAG with a local knowledge base. 
 - Local model cache and first-run setup flow
 
 ## Installation
