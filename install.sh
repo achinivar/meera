@@ -6,10 +6,10 @@ set -eu
 # Keep release/model/asset values here so release bumps are easy to review.
 ###############################################################################
 
-MEERA_VERSION="${MEERA_VERSION:-dev}"
-MEERA_RELEASE_URL="${MEERA_RELEASE_URL:-}"
-MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-e2b2d734cec52d3c3f20b1959a9eec5aa9de3bed9c5ee7bafb246908353cf8f7}"
-MEERA_INSTALLER_URL="${MEERA_INSTALLER_URL:-}"
+MEERA_VERSION="${MEERA_VERSION:-v0.1}"
+MEERA_RELEASE_URL="${MEERA_RELEASE_URL:-https://github.com/achinivar/meera/releases/download/v0.1/meera-v0.1.tar.gz}"
+MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-e62e87dad068205b5f06079a3b829b7f99aa53f899aaceff4221c92631a24c1b}"
+MEERA_INSTALLER_URL="${MEERA_INSTALLER_URL:-https://github.com/achinivar/meera/releases/latest/download/install.sh}"
 
 MEERA_LLAMA_CPP_TAG="${MEERA_LLAMA_CPP_TAG:-b8672}"
 MEERA_LLAMA_DL_BASE="https://github.com/ggml-org/llama.cpp/releases/download/${MEERA_LLAMA_CPP_TAG}"
