@@ -13,22 +13,21 @@ Meera is a local-first AI assistant for Linux GNOME desktops. It provides a nati
 
 ## Installation
 
-Clone the repo and run the installer:
+This downloads the pinned release tarball, verifies artifacts when the installer publishes checksums, and installs Meera under your XDG paths (`~/.local/bin`, `~/.local/share/meera`, etc.):
 
 ```bash
-git clone https://github.com/achinivar/meera.git
-cd meera
-chmod +x install.sh
-./install.sh
+curl -fsSL https://github.com/achinivar/meera/releases/latest/download/install.sh | sh
 ```
 
-After install, launch with:
+Then start Meera from the GNOME **Activities** overview (search for **Meera**) or from a terminal:
 
 ```bash
 meera
 ```
 
-Useful commands:
+The first launch runs a short GUI setup (autostart and keyboard shortcut options, then download of the default chat model). Later launches go straight to the app.
+
+### CLI helpers
 
 ```bash
 meera doctor
