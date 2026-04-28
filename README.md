@@ -4,7 +4,7 @@ Meera is a local-first AI assistant for Linux GNOME desktops. It provides a nati
 
 <div align="center">
 
-<img src="./assets/meera_bg.png" alt="Meera desktop assistant" width="780">
+<img src="./assets/meera_bg.png" alt="Meera desktop assistant" width="520">
 
 </div>
 
