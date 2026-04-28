@@ -101,9 +101,9 @@ def _retrieval_rag_threshold() -> float:
 def _retrieval_tool_margin() -> float:
     """Minimum score advantage top-tool needs over top-rag to select llm_tools."""
     try:
-        return float(os.environ.get("MEERA_RETRIEVAL_TOOL_MARGIN", "0.08"))
+        return float(os.environ.get("MEERA_RETRIEVAL_TOOL_MARGIN", "0.01"))
     except ValueError:
-        return 0.08
+        return 0.01
 
 
 # ---- Heuristic fast-path patterns ------------------------------------------

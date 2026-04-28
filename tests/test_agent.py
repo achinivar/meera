@@ -160,7 +160,7 @@ class TestDecideTurn(unittest.TestCase):
             plan = decide_turn("can you find a file called notes.md?")
         self.assertEqual(plan.kind, "llm_tools")
         self.assertEqual(plan.candidate_tools, ["file_search_name", "file_list_dir"])
-        self.assertEqual(len(plan.rag_hits), 1)
+        self.assertEqual(len(plan.rag_hits), 0)
 
     def test_chat_when_no_tool_candidates(self) -> None:
         def fake_retrieve(query, **_):
