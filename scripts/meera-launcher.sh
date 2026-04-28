@@ -380,7 +380,11 @@ cmd_run() {
   check_gtk || die "GTK4/PyGObject runtime not available"
   check_curl || die "curl not found"
   if [ ! -f "$MEERA_SETUP_COMPLETE_FILE" ]; then
-    run_full_first_setup_ui || cmd_first_run_worker
+    if can_show_setup_ui; then
+      run_full_first_setup_ui || exit $?
+    else
+      cmd_first_run_worker
+    fi
   else
     ensure_servers
   fi

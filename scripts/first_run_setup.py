@@ -238,6 +238,7 @@ def _run_full_setup(
     command: list[str],
     progress_file: str,
     exit_code: list[int],
+    setup_done: list[bool],
 ) -> None:
     try:
         env = {
@@ -258,6 +259,7 @@ def _run_full_setup(
             pass
         exit_code[0] = process.wait()
         if exit_code[0] == 0:
+            setup_done[0] = True
             GLib.idle_add(window.set_status, f"{window._model_name} - ready")
             GLib.idle_add(window.progress.set_fraction, 1.0)
             GLib.idle_add(window.progress.set_text, "100%")
@@ -297,6 +299,7 @@ def _poll_progress_file(window: SetupWindow, progress_file: str) -> bool:
 
 def _run_full_setup_ui(command: list[str]) -> int:
     exit_code = [0]
+    setup_done = [False]
     app = Gtk.Application(application_id="local.meera.Setup")
     progress_fd, progress_file = tempfile.mkstemp(prefix="meera-qwen-progress-")
     os.close(progress_fd)
@@ -315,7 +318,7 @@ def _run_full_setup_ui(command: list[str]) -> int:
         GLib.timeout_add(250, _poll_progress_file, window, progress_file)
         threading.Thread(
             target=_run_full_setup,
-            args=(window, app, command, progress_file, exit_code),
+            args=(window, app, command, progress_file, exit_code, setup_done),
             daemon=True,
         ).start()
 
@@ -370,6 +373,13 @@ def _run_full_setup_ui(command: list[str]) -> int:
 
     def on_activate(app: Gtk.Application) -> None:
         window = SetupWindow(app, "Qwen3.5-2B-Q4_K_M.gguf")
+
+        def on_close(_window) -> bool:
+            if not setup_done[0] and exit_code[0] == 0:
+                exit_code[0] = 130
+            return False
+
+        window.connect("close-request", on_close)
         window.present()
         show_autostart_step(window)
 
