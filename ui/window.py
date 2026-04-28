@@ -45,6 +45,8 @@ class MeeraWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Meera")
         self.set_default_size(550, 800)
+        self._css_provider = Gtk.CssProvider()
+        self._css_provider_installed = False
 
         # State for streaming
         self.is_streaming = False
@@ -242,6 +244,7 @@ class MeeraWindow(Gtk.Window):
 
         # Connect window close event to save history
         self.connect("close-request", self._on_window_close)
+        self._connect_theme_watchers()
         
         # Initial greeting after UI is ready
         GLib.idle_add(self._initial_greeting)
@@ -300,45 +303,63 @@ class MeeraWindow(Gtk.Window):
             }
             """
         
-        provider = Gtk.CssProvider()
-        provider.load_from_data(css.encode("utf-8"))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
+        self._css_provider.load_from_data(css.encode("utf-8"))
+        if not self._css_provider_installed:
+            display = Gdk.Display.get_default()
+            if display is not None:
+                Gtk.StyleContext.add_provider_for_display(
+                    display,
+                    self._css_provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+                )
+                self._css_provider_installed = True
+
+    def _ensure_tag(self, buf: Gtk.TextBuffer, name: str, **properties) -> Gtk.TextTag:
+        tag_table = buf.get_tag_table()
+        tag = tag_table.lookup(name)
+        if tag is None:
+            tag = buf.create_tag(name)
+        for key, value in properties.items():
+            tag.set_property(key, value)
+        return tag
     
     def _create_text_tags(self):
         """Create text tags for chat view based on current theme."""
         if self.is_dark_theme:
             # Dark theme: white text
-            self.text_tag = self.chat_buf.create_tag(
+            self.text_tag = self._ensure_tag(
+                self.chat_buf,
                 "text_fg",
                 foreground="#ffffff",
             )
             # Bold tag for sender names
-            self.bold_tag = self.chat_buf.create_tag(
+            self.bold_tag = self._ensure_tag(
+                self.chat_buf,
                 "bold_fg",
                 foreground="#ffffff",
                 weight=Pango.Weight.BOLD,
             )
             # Right alignment tag for user messages
-            self.user_right_tag = self.chat_buf.create_tag(
+            self.user_right_tag = self._ensure_tag(
+                self.chat_buf,
                 "user_right",
                 justification=Gtk.Justification.RIGHT,
             )
-            self.italic_tag = self.chat_buf.create_tag(
+            self.italic_tag = self._ensure_tag(
+                self.chat_buf,
                 "italic_fg",
                 foreground="#ffffff",
                 style=Pango.Style.ITALIC,
             )
-            self.inline_code_tag = self.chat_buf.create_tag(
+            self.inline_code_tag = self._ensure_tag(
+                self.chat_buf,
                 "inline_code",
                 foreground="#d4d4d4",
                 family="monospace",
                 background="#2b2b2b",
             )
-            self.code_block_tag = self.chat_buf.create_tag(
+            self.code_block_tag = self._ensure_tag(
+                self.chat_buf,
                 "code_block",
                 foreground="#d4d4d4",
                 family="monospace",
@@ -346,33 +367,39 @@ class MeeraWindow(Gtk.Window):
             )
         else:
             # Light theme: black text
-            self.text_tag = self.chat_buf.create_tag(
+            self.text_tag = self._ensure_tag(
+                self.chat_buf,
                 "text_fg",
                 foreground="#000000",
             )
             # Bold tag for sender names
-            self.bold_tag = self.chat_buf.create_tag(
+            self.bold_tag = self._ensure_tag(
+                self.chat_buf,
                 "bold_fg",
                 foreground="#000000",
                 weight=Pango.Weight.BOLD,
             )
             # Right alignment tag for user messages
-            self.user_right_tag = self.chat_buf.create_tag(
+            self.user_right_tag = self._ensure_tag(
+                self.chat_buf,
                 "user_right",
                 justification=Gtk.Justification.RIGHT,
             )
-            self.italic_tag = self.chat_buf.create_tag(
+            self.italic_tag = self._ensure_tag(
+                self.chat_buf,
                 "italic_fg",
                 foreground="#000000",
                 style=Pango.Style.ITALIC,
             )
-            self.inline_code_tag = self.chat_buf.create_tag(
+            self.inline_code_tag = self._ensure_tag(
+                self.chat_buf,
                 "inline_code",
                 foreground="#1f1f1f",
                 family="monospace",
                 background="#e8e8e8",
             )
-            self.code_block_tag = self.chat_buf.create_tag(
+            self.code_block_tag = self._ensure_tag(
+                self.chat_buf,
                 "code_block",
                 foreground="#1f1f1f",
                 family="monospace",
@@ -385,18 +412,54 @@ class MeeraWindow(Gtk.Window):
         """Create text tag for input view based on current theme."""
         if self.is_dark_theme:
             # Dark theme: white text
-            self.input_text_tag = self.input_buf.create_tag(
+            self.input_text_tag = self._ensure_tag(
+                self.input_buf,
                 "input_fg",
                 foreground="#ffffff",
             )
         else:
             # Light theme: black text
-            self.input_text_tag = self.input_buf.create_tag(
+            self.input_text_tag = self._ensure_tag(
+                self.input_buf,
                 "input_fg",
                 foreground="#000000",
             )
         # Keep input_white_tag as alias for backward compatibility
         self.input_white_tag = self.input_text_tag
+
+    def _connect_theme_watchers(self):
+        if ADW_AVAILABLE:
+            try:
+                style_manager = Adw.StyleManager.get_default()
+                style_manager.connect("notify::dark", self._on_theme_changed)
+            except Exception:
+                pass
+
+        try:
+            settings = Gtk.Settings.get_default()
+            if settings is not None:
+                settings.connect("notify::gtk-application-prefer-dark-theme", self._on_theme_changed)
+                settings.connect("notify::gtk-theme-name", self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _on_theme_changed(self, *_args):
+        GLib.idle_add(self._refresh_theme_after_change)
+
+    def _refresh_theme_after_change(self):
+        new_is_dark = self._detect_theme()
+        if new_is_dark == self.is_dark_theme:
+            return False
+        self.is_dark_theme = new_is_dark
+        self._setup_theme_styling()
+        self._create_text_tags()
+        self._create_input_text_tag()
+        start = self.input_buf.get_start_iter()
+        end_iter = self.input_buf.get_end_iter()
+        self.input_buf.apply_tag(self.input_text_tag, start, end_iter)
+        self.chat_view.queue_draw()
+        self.input_view.queue_draw()
+        return False
 
     # ---------- helper methods ----------
 
