@@ -28,6 +28,7 @@ MEERA_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/meera"
 MEERA_CHAT_PID="$MEERA_RUNTIME_DIR/llama-chat.pid"
 MEERA_EMBED_PID="$MEERA_RUNTIME_DIR/llama-embed.pid"
 MEERA_STATE_FILE="$MEERA_RUNTIME_DIR/servers.env"
+MEERA_BACKEND_CHOICE_FILE="$MEERA_CONFIG_DIR/backend-choice.env"
 MEERA_SETUP_COMPLETE_FILE="$MEERA_CONFIG_DIR/setup-complete"
 MEERA_BIN="$HOME/.local/bin/meera"
 MEERA_DESKTOP_FILE="$XDG_DATA_HOME/applications/local.meera.Meera.desktop"
@@ -38,6 +39,47 @@ section() { printf '\n==> %s\n' "$1" >&2; }
 info() { printf '%s\n' "$1"; }
 warn() { printf 'Warning: %s\n' "$1" >&2; }
 die() { printf 'Error: %s\n' "$1" >&2; exit 1; }
+backend_log() { printf '[meera-backend] %s\n' "$1" >&2; }
+
+show_warning_popup() {
+  _title="$1"
+  _body="$2"
+  if ! can_show_setup_ui; then
+    return 0
+  fi
+  python3 - "$_title" "$_body" <<'PY' >/dev/null 2>&1 || true
+import sys
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, GLib
+
+title, body = sys.argv[1], sys.argv[2]
+
+app = Gtk.Application(application_id="local.meera.Warning")
+
+def on_activate(app):
+    win = Gtk.ApplicationWindow(application=app, title=title)
+    win.set_default_size(460, 140)
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    box.set_margin_top(16)
+    box.set_margin_bottom(16)
+    box.set_margin_start(16)
+    box.set_margin_end(16)
+    lbl = Gtk.Label(label=body)
+    lbl.set_wrap(True)
+    lbl.set_xalign(0)
+    box.append(lbl)
+    btn = Gtk.Button(label="OK")
+    btn.connect("clicked", lambda *_: app.quit())
+    box.append(btn)
+    win.set_child(box)
+    win.present()
+    GLib.timeout_add(7000, lambda: (app.quit(), False)[1])
+
+app.connect("activate", on_activate)
+app.run(None)
+PY
+}
 
 remove_dir_if_exists() {
   _dir="$1"
@@ -94,7 +136,6 @@ select_llama_asset() {
   esac
 
   if [ "$_backend" = "vulkan" ]; then
-    [ "$_family" = "ubuntu" ] || return 1
     if [ "$_norm_arch" = "x86_64" ]; then
       LLAMA_ASSET="$MEERA_LLAMA_UBUNTU_VULKAN_X64_ASSET"
       LLAMA_SHA="$MEERA_SHA_LLAMA_UBUNTU_VULKAN_X64"
@@ -151,6 +192,55 @@ ensure_llama_bundle() {
     return 0
   fi
   ensure_llama_bundle_for cpu
+}
+
+load_backend_choice() {
+  BACKEND_CHOICE=""
+  BACKEND_DECISION_SOURCE=""
+  BACKEND_DECISION_REASON=""
+  if [ -f "$MEERA_BACKEND_CHOICE_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$MEERA_BACKEND_CHOICE_FILE" || true
+    case "${MEERA_LLAMACPP_BACKEND_CHOICE:-}" in
+      vulkan | cpu) BACKEND_CHOICE="${MEERA_LLAMACPP_BACKEND_CHOICE}" ;;
+      *) BACKEND_CHOICE="" ;;
+    esac
+    BACKEND_DECISION_SOURCE="${MEERA_LLAMACPP_BACKEND_SOURCE:-persisted}"
+    BACKEND_DECISION_REASON="${MEERA_LLAMACPP_BACKEND_REASON:-loaded from config}"
+  fi
+}
+
+persist_backend_choice() {
+  _choice="$1"
+  _source="$2"
+  _reason="$3"
+  mkdir -p "$MEERA_CONFIG_DIR"
+  cat >"$MEERA_BACKEND_CHOICE_FILE" <<EOF
+MEERA_LLAMACPP_BACKEND_CHOICE="$_choice"
+MEERA_LLAMACPP_BACKEND_SOURCE="$_source"
+MEERA_LLAMACPP_BACKEND_REASON="$_reason"
+MEERA_LLAMACPP_BACKEND_UPDATED_AT="$(date -Iseconds 2>/dev/null || date)"
+EOF
+}
+
+decide_backend_choice() {
+  load_backend_choice
+  if [ -n "${BACKEND_CHOICE:-}" ]; then
+    backend_log "Backend decision: ${BACKEND_CHOICE^^} (source=${BACKEND_DECISION_SOURCE}, reason=${BACKEND_DECISION_REASON})"
+    return 0
+  fi
+  if has_render_node; then
+    BACKEND_CHOICE="vulkan"
+    BACKEND_DECISION_SOURCE="probe"
+    BACKEND_DECISION_REASON="render node detected"
+    backend_log "Backend probe: render node detected; selecting VULKAN."
+  else
+    BACKEND_CHOICE="cpu"
+    BACKEND_DECISION_SOURCE="probe"
+    BACKEND_DECISION_REASON="no render node detected"
+    backend_log "Backend probe: no render node detected; selecting CPU."
+  fi
+  persist_backend_choice "$BACKEND_CHOICE" "$BACKEND_DECISION_SOURCE" "$BACKEND_DECISION_REASON"
 }
 
 can_show_setup_ui() {
@@ -285,7 +375,7 @@ pid_alive() {
 
 wait_for_server() {
   _url="$1"; _log="$2"; _wait=0
-  while [ "$_wait" -lt 45 ]; do
+  while [ "$_wait" -lt 15 ]; do
     server_reachable "$_url" && return 0
     sleep 1
     _wait=$((_wait + 1))
@@ -294,7 +384,13 @@ wait_for_server() {
     warn "Last lines from $_log:"
     tail -n 80 "$_log" >&2 || true
   fi
-  die "Server did not become reachable at $_url. See $_log"
+  return 1
+}
+
+log_indicates_vram_pressure() {
+  _log="$1"
+  [ -f "$_log" ] || return 1
+  grep -qE "failed to fit params to free device memory|n_gpu_layers already set by user to" "$_log"
 }
 
 stop_pid_file() {
@@ -326,7 +422,20 @@ ensure_servers() {
 
   if ! pid_alive "$MEERA_CHAT_PID" || [ -z "$_chat_url" ] || ! server_reachable "$_chat_url"; then
     stop_pid_file "$MEERA_CHAT_PID"
-    ensure_llama_bundle
+    decide_backend_choice
+    if ! ensure_llama_bundle_for "$BACKEND_CHOICE"; then
+      if [ "$BACKEND_CHOICE" = "vulkan" ]; then
+        backend_log "Vulkan bundle/setup failed; FALLBACK to CPU."
+        BACKEND_CHOICE="cpu"
+        BACKEND_DECISION_SOURCE="fallback"
+        BACKEND_DECISION_REASON="vulkan setup failed"
+        persist_backend_choice "$BACKEND_CHOICE" "$BACKEND_DECISION_SOURCE" "$BACKEND_DECISION_REASON"
+        ensure_llama_bundle_for cpu
+      else
+        die "CPU bundle setup failed."
+      fi
+    fi
+    backend_log "Using backend ${LLAMA_BACKEND^^} (bundle=${LLAMA_ID}, chat -ngl=$([ "${LLAMA_BACKEND:-cpu}" = "vulkan" ] && printf '99' || printf '0'))."
     _chat_model="$(ensure_model "$MEERA_CHAT_MODEL_NAME" "$MEERA_CHAT_MODEL_URL" "$MEERA_CHAT_MODEL_SHA256")"
     _chat_port="$(find_free_port 8080 8082 8089)"
     _chat_url="http://127.0.0.1:$_chat_port"
@@ -337,7 +446,37 @@ ensure_servers() {
       "$LLAMA_BIN" -m "$_chat_model" --host 127.0.0.1 --port "$_chat_port" \
       -ngl "$_chat_ngl" --parallel 1 >"$MEERA_LOG_DIR/llama-chat.log" 2>&1 &
     echo "$!" >"$MEERA_CHAT_PID"
-    wait_for_server "$_chat_url" "$MEERA_LOG_DIR/llama-chat.log"
+    if ! wait_for_server "$_chat_url" "$MEERA_LOG_DIR/llama-chat.log"; then
+      if [ "${LLAMA_BACKEND:-cpu}" = "vulkan" ]; then
+        stop_pid_file "$MEERA_CHAT_PID"
+        BACKEND_CHOICE="cpu"
+        if log_indicates_vram_pressure "$MEERA_LOG_DIR/llama-chat.log"; then
+          BACKEND_DECISION_SOURCE="runtime-fallback-transient"
+          BACKEND_DECISION_REASON="insufficient GPU memory"
+          show_warning_popup \
+            "Meera switched to CPU mode" \
+            "GPU memory is currently insufficient for Vulkan offload. Meera will continue on CPU for now."
+          backend_log "Vulkan runtime start failed; FALLBACK to CPU (${BACKEND_DECISION_REASON}). Keeping persisted preference unchanged."
+        else
+          BACKEND_DECISION_SOURCE="runtime-fallback"
+          BACKEND_DECISION_REASON="vulkan unavailable at runtime"
+          show_warning_popup \
+            "Meera switched to CPU mode" \
+            "Vulkan is not available right now. Meera will continue on CPU."
+          backend_log "Vulkan runtime start failed; FALLBACK to CPU (${BACKEND_DECISION_REASON}). Persisting CPU preference."
+          persist_backend_choice "$BACKEND_CHOICE" "$BACKEND_DECISION_SOURCE" "$BACKEND_DECISION_REASON"
+        fi
+        ensure_llama_bundle_for cpu
+        _chat_ngl=0
+        env LD_LIBRARY_PATH="${LLAMA_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+          "$LLAMA_BIN" -m "$_chat_model" --host 127.0.0.1 --port "$_chat_port" \
+          -ngl "$_chat_ngl" --parallel 1 >"$MEERA_LOG_DIR/llama-chat.log" 2>&1 &
+        echo "$!" >"$MEERA_CHAT_PID"
+        wait_for_server "$_chat_url" "$MEERA_LOG_DIR/llama-chat.log" || die "CPU fallback server did not become reachable at $_chat_url"
+      else
+        die "Server did not become reachable at $_chat_url. See $MEERA_LOG_DIR/llama-chat.log"
+      fi
+    fi
   fi
 
   if ! pid_alive "$MEERA_EMBED_PID" || [ -z "$_embed_url" ] || ! server_reachable "$_embed_url"; then
@@ -354,12 +493,15 @@ ensure_servers() {
       "$LLAMA_BIN" -m "$_embed_model" --host 127.0.0.1 --port "$_embed_port" \
       -ngl 0 --embeddings -c 512 >"$MEERA_LOG_DIR/llama-embed.log" 2>&1 &
     echo "$!" >"$MEERA_EMBED_PID"
-    wait_for_server "$_embed_url" "$MEERA_LOG_DIR/llama-embed.log"
+    wait_for_server "$_embed_url" "$MEERA_LOG_DIR/llama-embed.log" || die "Embedding server did not become reachable at $_embed_url. See $MEERA_LOG_DIR/llama-embed.log"
   fi
 
   cat >"$MEERA_STATE_FILE" <<EOF
 MEERA_LLAMACPP_URL="$_chat_url"
 MEERA_EMBED_URL="$_embed_url"
+MEERA_LLAMACPP_BACKEND="${LLAMA_BACKEND:-cpu}"
+MEERA_LLAMACPP_BACKEND_SOURCE="${BACKEND_DECISION_SOURCE:-runtime}"
+MEERA_LLAMACPP_BACKEND_REASON="${BACKEND_DECISION_REASON:-bundle selected}"
 EOF
   mkdir -p "$MEERA_CONFIG_DIR"
   cat >"$MEERA_SETUP_COMPLETE_FILE" <<EOF
@@ -402,6 +544,8 @@ cmd_unload_model() {
   stop_pid_file "$MEERA_CHAT_PID"
   stop_pid_file "$MEERA_EMBED_PID"
   rm -f "$MEERA_STATE_FILE"
+  rm -f "$MEERA_BACKEND_CHOICE_FILE"
+  info "Cleared persisted backend choice; it will be re-probed on next startup."
 }
 
 cmd_restart_model() {
@@ -431,9 +575,20 @@ cmd_doctor() {
   check_curl && info "curl: ok" || warn "curl: missing"
   if [ -f "$MEERA_STATE_FILE" ]; then
     info "Server state:"
-    sed 's/^/  /' "$MEERA_STATE_FILE"
+    sed -E '/^MEERA_LLAMACPP_BACKEND_SOURCE=/d; /^MEERA_LLAMACPP_BACKEND_REASON=/d; s/^/  /' "$MEERA_STATE_FILE"
+    # shellcheck disable=SC1090
+    . "$MEERA_STATE_FILE" || true
+    info "Inference backend: ${MEERA_LLAMACPP_BACKEND:-unknown}"
+    info "Backend source: ${MEERA_LLAMACPP_BACKEND_SOURCE:-unknown}"
+    info "Backend reason: ${MEERA_LLAMACPP_BACKEND_REASON:-unknown}"
   else
     info "Server state: not running"
+  fi
+  if [ -f "$MEERA_BACKEND_CHOICE_FILE" ]; then
+    info "Persisted backend choice:"
+    sed -E '/^MEERA_LLAMACPP_BACKEND_SOURCE=/d; /^MEERA_LLAMACPP_BACKEND_REASON=/d; s/^/  /' "$MEERA_BACKEND_CHOICE_FILE"
+  else
+    info "Persisted backend choice: none"
   fi
   if [ -f "$MEERA_SETUP_COMPLETE_FILE" ]; then
     info "First-run setup: complete"

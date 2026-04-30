@@ -382,6 +382,18 @@ log_dir=$MEERA_LOG_DIR
 EOF
 }
 
+print_path_guidance() {
+  case ":$PATH:" in
+    *":$MEERA_BIN_DIR:"*) return 0 ;;
+  esac
+  info ""
+  warn "'$MEERA_BIN_DIR' is not in your current PATH."
+  info "To run Meera from terminal, add this line to ~/.bashrc:"
+  info "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  info "Then restart your terminal session (or run: source ~/.bashrc)."
+  info "You can still launch Meera from GNOME app search right now."
+}
+
 main() {
   section "Meera installer"
   install_dependencies_if_needed
@@ -397,8 +409,10 @@ main() {
   info "Useful commands:"
   info "  meera doctor"
   info "  meera logs"
+  info "  meera restart-model"
   info "  meera unload-model"
   info "  meera uninstall"
+  print_path_guidance
 }
 
 main "$@"
