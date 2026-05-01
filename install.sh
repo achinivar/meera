@@ -6,9 +6,9 @@ set -eu
 # Keep release/model/asset values here so release bumps are easy to review.
 ###############################################################################
 
-MEERA_VERSION="${MEERA_VERSION:-v0.1}"
-MEERA_RELEASE_URL="${MEERA_RELEASE_URL:-https://github.com/achinivar/meera/releases/download/v0.1/meera-v0.1.tar.gz}"
-MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-e62e87dad068205b5f06079a3b829b7f99aa53f899aaceff4221c92631a24c1b}"
+MEERA_VERSION="${MEERA_VERSION:-v0.2}"
+MEERA_RELEASE_URL="${MEERA_RELEASE_URL:-https://github.com/achinivar/meera/releases/download/v0.2/meera-v0.2.tar.gz}"
+MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-787f2fe38fb892f437913321a9006ad017016099f3e479cd34a5d040cf3397ab}"
 MEERA_INSTALLER_URL="${MEERA_INSTALLER_URL:-https://github.com/achinivar/meera/releases/latest/download/install.sh}"
 
 MEERA_LLAMA_CPP_TAG="${MEERA_LLAMA_CPP_TAG:-b8672}"
