@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +31,7 @@ from typing import Any
 from embeddings import EmbeddingUnavailableError
 from inference import stream_llm_events, supports_tools
 from retrieval import IndexHit, RetrievalResult, retrieve
+from retrieval.query import _debug_retrieval_enabled
 from tools.registry import TOOLS, get_tool
 from tools.runner import run_tool
 from tools.schema import ToolParam, ToolResult, ToolSpec
@@ -86,16 +88,16 @@ def _retrieval_top_k_rag() -> int:
 
 def _retrieval_tool_threshold() -> float:
     try:
-        return float(os.environ.get("MEERA_RETRIEVAL_TOOL_THRESHOLD", "0.35"))
+        return float(os.environ.get("MEERA_RETRIEVAL_TOOL_THRESHOLD", "0.75"))
     except ValueError:
-        return 0.35
+        return 0.75
 
 
 def _retrieval_rag_threshold() -> float:
     try:
-        return float(os.environ.get("MEERA_RETRIEVAL_RAG_THRESHOLD", "0.35"))
+        return float(os.environ.get("MEERA_RETRIEVAL_RAG_THRESHOLD", "0.6"))
     except ValueError:
-        return 0.35
+        return 0.6
 
 
 def _retrieval_tool_margin() -> float:
@@ -310,6 +312,27 @@ def toolspec_to_openai_tool(spec: ToolSpec) -> dict[str, Any]:
 # ---- System prompt assembly -------------------------------------------------
 
 
+def _local_clock_context_for_prompt() -> str:
+    """Local date and time only (system local); tools attach timezone when parsing naive ISO."""
+    now = datetime.now().astimezone()
+    return (
+        f"Current local date: {now:%Y-%m-%d}, time: {now:%H:%M:%S}. "
+        "Use this when resolving relative wording (today, tomorrow, weekday names, etc.) "
+        "for tools that need absolute start times."
+    )
+
+
+def _debug_log_model_tool_calls(phase: str, tool_calls: list[dict[str, Any]]) -> None:
+    """Log raw assistant tool_calls from the LLM when MEERA_DEBUG_RETRIEVAL is on."""
+    if not _debug_retrieval_enabled() or not tool_calls:
+        return
+    try:
+        payload = json.dumps(tool_calls, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        payload = repr(tool_calls)
+    print(f"[retrieval] model tool_calls ({phase}):\n{payload}", file=sys.stderr, flush=True)
+
+
 def _format_rag_block(rag_hits: list[IndexHit]) -> str:
     if not rag_hits:
         return ""
@@ -337,10 +360,18 @@ def build_agent_system_prompt(
 ) -> str:
     """Compose the per-turn system prompt for the agent.
 
-    Includes identity, behaviour guidance, distro hint, and (when present)
-    inlined <KNOWLEDGE> blocks for retrieved RAG chunks.
+    Includes identity, behaviour guidance, distro hint, current local clock
+    (for scheduling tools), and (when present) inlined <KNOWLEDGE> blocks for
+    retrieved RAG chunks.
     """
     rag_block = _format_rag_block(rag_hits or [])
+    clock = _local_clock_context_for_prompt()
+    if _debug_retrieval_enabled():
+        print(
+            f"[retrieval] system_prompt clock (in model system message): {clock}",
+            file=sys.stderr,
+            flush=True,
+        )
     return (
         f"{base_identity.strip()}\n\n"
         "You have a small set of local tools that can read or change this "
@@ -350,7 +381,8 @@ def build_agent_system_prompt(
         "reply directly in plain language.\n\n"
         "Never claim you ran, executed, set, changed, or applied anything "
         "unless a tool result is actually present in this conversation.\n\n"
-        f"Host distro: {distro}."
+        f"Host distro: {distro}.\n\n"
+        f"{clock}"
         f"{rag_block}"
     )
 
@@ -646,6 +678,8 @@ def _run_llm_tools_turn(
         elif kind == "tool_calls":
             accumulated_tool_calls = ev.get("tool_calls") or []
 
+    _debug_log_model_tool_calls("first_pass", accumulated_tool_calls)
+
     if not accumulated_tool_calls:
         yield {"kind": "done", "memory_messages": memory_messages}
         return
@@ -704,6 +738,7 @@ def _run_llm_tools_turn(
                 new_tool_calls = ev.get("tool_calls") or []
         if not new_tool_calls:
             break
+        _debug_log_model_tool_calls(f"followup_pass_{passes}", new_tool_calls)
         msgs.append({"role": "assistant", "content": "", "tool_calls": new_tool_calls})
         for tc in new_tool_calls:
             fn = tc.get("function") or {}

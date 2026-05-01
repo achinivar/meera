@@ -607,7 +607,7 @@ cmd_update() {
 
 cmd_uninstall() {
   if [ -r /dev/tty ]; then
-    printf 'Uninstall Meera, including models, config, logs, and history? [y/N] ' >/dev/tty
+    printf 'Uninstall Meera (app, config, data/history, and ~/.cache/meera models)? [y/N] ' >/dev/tty
     IFS= read -r _answer </dev/tty || _answer=""
   else
     _answer=""
@@ -642,7 +642,7 @@ Usage: meera [command]
 Commands:
   run             Start Meera (default)
   update          Update Meera using the configured installer URL
-  uninstall       Remove Meera, including downloaded models
+  uninstall       Remove Meera (including ~/.cache/meera models and bundles)
   doctor          Check runtime dependencies and server state
   logs            Show recent Meera logs
   restart-model   Restart local llama.cpp model servers

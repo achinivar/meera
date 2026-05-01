@@ -6,11 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from datetime import datetime, timezone
-
 from tools.gsettings import _build_titlebar_layout
 from tools.registry import TOOLS, get_tool, tools_prompt_catalog_json
-from tools.scheduler import _build_vevent_ics_document, _ics_text_escape
+from tools.scheduler import (
+    _build_vevent_ics_document,
+    _ics_dtstart_value_from_start_arg,
+    _ics_text_escape,
+)
 from tools.runner import run_tool
 from tools.schema import ToolResult
 
@@ -107,8 +109,7 @@ class TestGnomeCalendarIcs(unittest.TestCase):
         self.assertIn("\\n", _ics_text_escape("line1\nline2"))
 
     def test_vevent_document_dtstart_duration(self) -> None:
-        dt = datetime(2024, 5, 1, 9, 0, tzinfo=timezone.utc)
-        doc = _build_vevent_ics_document("Meeting", dt, 60)
+        doc = _build_vevent_ics_document("Meeting", "20240501T090000Z", 60)
         self.assertIn("BEGIN:VCALENDAR\r\n", doc)
         self.assertIn("SUMMARY:Meeting\r\n", doc)
         self.assertIn("DTSTART:20240501T090000Z\r\n", doc)
@@ -116,9 +117,12 @@ class TestGnomeCalendarIcs(unittest.TestCase):
         self.assertIn("END:VCALENDAR", doc)
 
     def test_duration_minutes_not_whole_hours(self) -> None:
-        dt = datetime(2024, 5, 1, 9, 0, tzinfo=timezone.utc)
-        doc = _build_vevent_ics_document("Quick", dt, 45)
+        doc = _build_vevent_ics_document("Quick", "20240501T090000Z", 45)
         self.assertIn("DURATION:PT45M", doc)
+
+    def test_dtstart_copies_model_digits_with_z_suffix(self) -> None:
+        v = _ics_dtstart_value_from_start_arg("2026-05-02T09:00:00Z")
+        self.assertEqual(v, "20260502T090000Z")
 
 
 class TestGnomeTitlebarLayout(unittest.TestCase):

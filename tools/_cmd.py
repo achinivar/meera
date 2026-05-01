@@ -1,7 +1,9 @@
 """Bounded subprocess helpers — never shell=True."""
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from typing import NamedTuple, Sequence
 
 from tools.schema import ToolResult, tool_result_err
@@ -20,6 +22,12 @@ def run_argv(
     max_stdout_chars: int = 65536,
     max_stderr_chars: int = 16384,
 ) -> CmdOutput | ToolResult:
+    if (
+        argv
+        and argv[0] == "gsettings"
+        and os.environ.get("MEERA_DEBUG_RETRIEVAL", "").strip().lower() in ("1", "true", "yes", "on")
+    ):
+        print(f"[retrieval] subprocess gsettings: {list(argv)!r}", file=sys.stderr, flush=True)
     try:
         proc = subprocess.run(
             list(argv),

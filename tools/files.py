@@ -250,7 +250,6 @@ TOOLS: list[ToolSpec] = [
         exemplars=[
             "what's in my Documents folder",
             "list files in ~/Downloads",
-            "show me what's in this directory",
             "ls my home folder",
             "what files are in ~/Pictures",
             "contents of the Music directory",

@@ -1,38 +1,31 @@
-# RAG Seed Data for Meera
+# RAG knowledge base (`rag_data`)
 
-This directory contains curated Markdown documents intended to seed Meera's Linux-help knowledge base.
+## Adding a document
 
-## Scope
+1. **Path** — Add a new `*.md` file **in this directory** (`rag_data/`). Only top-level `rag_data/*.md` files are indexed; the chunker does not walk subdirectories.
 
-- Distro-specific package install commands (Debian/Ubuntu, Fedora/RPM, Arch).
-- Fedora Silverblue concepts (immutable OS, Toolbox, layering with rpm-ostree).
-- Basics for common CLI tools (`vim`, `grep`, `sed`, `awk`, and others).
+2. **Structure** — Start with a single **`# Title`** line. Split the rest into sections with **`## Section name`**. Chunks are cut at each `##`; everything before the first `##` is not embedded (keep it short—intro only). Use `###` inside a section for subheadings; they stay part of the same chunk.
 
-## MD-only RAG authoring format
+3. **Content** — Write for short, factual passages the model can quote. Prefer concrete commands, flags, and caveats. The embedder sees `Title — Section` plus the body, so section titles should match how users might ask (e.g. “Network diagnostics”, not “Part 2”).
 
-For stronger retrieval and answer quality, each topic file should include:
+4. **Chunk size (512 tokens)** — Each `##` section is one retrieval chunk. The embedding model (`bge-small-en-v1.5`) accepts **at most 512 tokens** per chunk, including the title and section line in the indexed text. If a section grows too large, split it into additional `##` headings. The test suite in `tests/test_retrieval.py` guards this: `TestRagChunkSizeCap` (fast char heuristic) always runs; `TestRagBgeTokenizerCap` counts tokens with the real tokenizer when `transformers` is installed.
 
-1. What it is (plain-language definition)
-2. When to use it
-3. Common syntax/flags
-4. Practical examples
-5. Common mistakes or gotchas
-6. Safety notes (if relevant)
-7. Related commands
-8. Sources
+5. **Exclude** — `README.md` is never indexed (authoring only).
 
-## Retrieval hints (no SQL required)
+6. **Pick up changes** — Restart Meera (or restart the process that builds the retrieval index) so new files are embedded.
 
-- Keep one topic per file with clear headings.
-- Prefer short sections with explicit command names in headings.
-- Repeat key terms users might ask (for example: "install package", "remove package", "update").
-- Keep distro-specific commands in clearly labeled subsections.
-- Include beginner wording in definitions so semantic retrieval works for novice questions.
+Run the chunk-size tests (optional locally):
 
-## Authoring notes
+```bash
+MEERA_EMBED_FAKE=1 python3 -m unittest \
+  tests.test_retrieval.TestRagChunkSizeCap \
+  tests.test_retrieval.TestRagBgeTokenizerCap -v
+```
 
-- Keep each topic in a focused file.
-- Prefer short, practical command examples.
-- Add a "Sources" section for traceability.
-- When commands are distro-specific, label them clearly.
+(`TestRagBgeTokenizerCap` is skipped unless `transformers` is installed.)
 
+## Layout
+
+- **`*.md`** (except `README.md`) — chunked at `##` and embedded for retrieval.
+
+Repo root `README.md` may duplicate high-level RAG notes; this file is the authoring source of truth for `rag_data/`.
