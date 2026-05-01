@@ -1,60 +1,86 @@
-# Downloads Basics
+# Downloads and archives
 
-## What it is
+## Overview
 
-`curl` and `wget` download files and make HTTP requests from the command line.
+**curl** and **wget** fetch URLs from the shell. **tar** bundles directories (`.tar.gz`, `.tar.xz`); **zip/unzip** handle `.zip`. Typical flow: download → optional **checksum** → **list** archive contents → **extract** into a directory you chose (e.g. `mkdir out && cd out` so files do not scatter in the wrong place).
 
-## When to use it
+**Safety:** preview with **`tar -tvf`** / **`unzip -l`** before extracting; do not **`curl | bash`** untrusted scripts.
 
-Use these commands for scripted downloads, API checks, and fetching release artifacts.
+**Sources:** [curl](https://curl.se/docs/), [Wget](https://www.gnu.org/software/wget/manual/wget.html), [GNU tar](https://www.gnu.org/software/tar/manual/tar.html), [Info-ZIP](https://infozip.sourceforge.net/).
 
-## Download a file
+## Download with curl and wget
 
-```bash
-curl -L -o file.tar.gz "https://example.com/file.tar.gz"
-wget "https://example.com/file.tar.gz"
-```
-
-## Resume downloads
+**Save a file** — **`curl`** needs **`-L`** to follow redirects; without it you may save an HTML redirect page instead of the real artifact. Use **`-o`** for the local name. **`wget`** uses the URL basename by default.
 
 ```bash
-wget -c "https://example.com/large.iso"
+curl -L -o file.tar.gz 'https://example.com/file.tar.gz'
+wget 'https://example.com/file.tar.gz'
 ```
 
-## Show response headers
+**Resume** a partial **`wget`** download:
 
 ```bash
-curl -I "https://example.com"
+wget -c 'https://example.com/large.iso'
 ```
 
-## Simple API request
+**Response headers only** — **`curl -I`** prints the HTTP status line and response headers **only**; the body is omitted. Useful for **`Location:`** redirects, **`Content-Type`**, or a quick “does this URL respond?” check without downloading the full page.
 
 ```bash
-curl "https://api.github.com/repos/torvalds/linux"
+curl -I 'https://example.com'
 ```
 
-## Notes
+**GET returning JSON** — a normal GET to a URL whose **response body** is JSON (not a separate `curl` “JSON mode”). This example hits GitHub’s public HTTP API, which returns repository metadata as JSON:
 
-- Use `-L` with `curl` to follow redirects.
-- Verify checksums when downloading binaries/scripts.
+```bash
+curl 'https://api.github.com/repos/torvalds/linux'
+```
 
-## Common mistakes
+**Checksums** — **`sha256sum`** hashes **any** downloaded file (not tar-specific). Compare to the publisher’s listed hash **before** extract or execute:
 
-- Downloading HTML redirect pages instead of real files.
-- Running remote scripts without inspecting them.
-- Ignoring TLS/URL typos.
+```bash
+sha256sum file.tar.gz
+```
 
-## Safety notes
+## Tar: create, list, and extract
 
-- Verify downloads with checksums/signatures when available.
-- Prefer explicit output paths (`-o`) and review files before execution.
+**Create** — **`-c`** create; **`v`** verbose; **`f`** archive path. Compression: **`-z`** gzip (`.tar.gz`), **`-J`** xz (`.tar.xz`); omit **`z`/`J`** for plain `.tar`.
 
-## Related commands
+```bash
+tar -cvf archive.tar my_folder
+tar -czvf archive.tar.gz my_folder
+tar -cJvf archive.tar.xz my_folder
+```
 
-- `sha256sum`, `tar`, `unzip`
+**List** before extracting (see paths that would land on disk):
 
-## Sources
+```bash
+tar -tvf archive.tar.gz
+```
 
-- curl docs: https://curl.se/docs/
-- GNU Wget manual: https://www.gnu.org/software/wget/manual/wget.html
+**Extract** — **`-x`** extract; compression flags must **match** how the archive was made (**`z`** vs **`J`** — wrong flag yields errors or garbage):
 
+```bash
+tar -xvf archive.tar
+tar -xzvf archive.tar.gz
+tar -xJvf archive.tar.xz
+```
+
+## Zip and unzip
+
+**Create** a zip of a directory:
+
+```bash
+zip -r files.zip my_folder
+```
+
+**Extract**:
+
+```bash
+unzip files.zip
+```
+
+**List** contents:
+
+```bash
+unzip -l files.zip
+```

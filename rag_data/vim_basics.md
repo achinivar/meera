@@ -1,78 +1,62 @@
-# vim Basics
+# Vim essentials
 
-## What it is
+## Overview
 
-`vim` is a modal terminal text editor. You switch between modes for typing, navigation, and commands.
+**Vim** is **modal**: **Normal** mode runs navigation/commands; **Insert** types text; **`:`** opens **Command-line** mode (save/quit/search). If keys **move the cursor** or **delete** instead of typing letters, you are in **Normal** mode—press **`Esc`**, then **`i`** to insert.
 
-## When to use it
+**Safety:** if stuck, **`Esc`** a few times then **`:q!`** exits without saving. Use **`:w`** often while learning.
 
-Use `vim` when editing config files over SSH, making quick terminal edits, or working without a GUI editor.
+**Sources:** [Vim docs](https://www.vim.org/docs.php), [Vim user manual](https://vimhelp.org/usr_toc.txt.html).
 
-## Modes
+## Modes at a glance
 
-- Normal mode: navigation and commands
-- Insert mode: typing text
-- Command-line mode: save/quit/search commands (entered with `:` from Normal mode)
+- **Normal** — navigation, delete/yank, run **`:`** commands.
+- **Insert** — typing (`i`, `a`, `o` from Normal).
+- **Command-line** — after **`:`** (save, quit, substitute).
 
-## Essential keys
+Press **`Esc`** to return to Normal.
 
-### Enter insert mode
+## Enter Insert mode
 
-- `i`: insert before cursor
-- `a`: append after cursor
-- `o`: open a new line below
+| Key | Effect |
+|-----|--------|
+| `i` | Insert before cursor |
+| `a` | Append after cursor |
+| `o` | Open new line below |
 
-Press `Esc` to return to Normal mode.
+## Save and quit (Command-line)
 
-### Save and quit
+Type **`:`** from Normal, then:
 
 ```vim
-:w
-:q
-:wq
-:q!
+:w          " write (save)
+:q          " quit only if no unsaved changes (Vim errors if buffer modified)
+:wq         " save and quit
+:q!         " quit, discard unsaved changes
 ```
 
-### Navigation
+## Move in Normal mode
 
-- `h` `j` `k` `l`: left/down/up/right
-- `gg`: start of file
-- `G`: end of file
-- `/pattern`: search forward
-- `n`: next search result
+| Keys | Effect |
+|------|--------|
+| `h` `j` `k` `l` | Left / down / up / right |
+| `gg` | First line |
+| `G` | End of file |
+| `/pattern` | Search forward |
+| `n` | Next match |
 
-## Copy/paste/delete (Normal mode)
+## Copy, delete, undo
 
-- `yy`: yank (copy) line
-- `p`: paste after cursor
-- `dd`: delete line
-- `u`: undo
-- `Ctrl+r`: redo
+| Keys | Effect |
+|------|--------|
+| `yy` | Yank (copy) line |
+| `p` | Paste after cursor |
+| `dd` | Delete line |
+| `u` | Undo |
+| `Ctrl+r` | Redo |
 
 ## Beginner workflow
 
-1. Open file: `vim notes.txt`
-2. Press `i`, type text.
-3. Press `Esc`.
-4. Save and quit with `:wq`.
-
-## Common mistakes
-
-- Forgetting which mode you are in.
-- Trying to type while still in Normal mode.
-- Exiting with unsaved changes by accident.
-
-## Safety notes
-
-- If stuck, press `Esc` a few times, then `:q!` to exit without saving.
-- Prefer `:w` often while learning.
-
-## Related commands
-
-- `nano`, `less`, `cat`
-
-## Sources
-
-- Vim documentation: https://www.vim.org/docs.php
-- Vim user manual (online): https://vimhelp.org/usr_toc.txt.html
-
+1. **`vim notes.txt`**
+2. **`i`**, type, **`Esc`**
+3. **`:wq`** to save and exit.

@@ -1,64 +1,60 @@
-# Distro-Specific Package Installation Commands
+# Package installation by distro (and Fedora Atomic)
 
-## What this guide is for
+## Overview
 
-This guide maps common package-management tasks to Debian/Ubuntu, Fedora/RPM-based systems, and Arch Linux.
+This guide maps **install**, **upgrade**, **remove**, and **search** to **Debian/Ubuntu** (`apt`), **Fedora-class** (`dnf`), **Arch** (`pacman`), and **Fedora Atomic / Silverblue** (Flatpak, Toolbox, `rpm-ostree`). **Pick commands that match `ID` / `ID_LIKE` in `/etc/os-release`**—running `apt` on Fedora or `dnf` on Ubuntu will not work.
 
-## When to use it
+**Safety:** read install/remove prompts. On Atomic hosts prefer **Flatpak** and **Toolbox**; many **`rpm-ostree install`** layers mean more reboots and harder rollbacks.
 
-Use this when you know what software you want and need the correct install/remove/update command for your distro.
+**Sources:** [Ubuntu package management](https://documentation.ubuntu.com/server/how-to/software/package-management/index.html), [DNF reference](https://dnf.readthedocs.io/en/stable/command_ref.html), [ArchWiki pacman](https://wiki.archlinux.org/title/Pacman), [Silverblue docs](https://docs.fedoraproject.org/en-US/fedora-silverblue/), [Toolbox](https://containertoolbx.org/doc/).
 
 ## Detect your distro
+
+Print OS metadata; read **`ID`** and **`ID_LIKE`**:
 
 ```bash
 cat /etc/os-release
 ```
 
-Look at `ID` and `ID_LIKE` values.
-
 ## Install a package
 
-### Debian/Ubuntu
+**Debian/Ubuntu** — metadata must be current before new packages show up:
 
 ```bash
 sudo apt update
 sudo apt install <package-name>
 ```
 
-### Fedora (RPM-based)
+**Fedora / RPM family:**
 
 ```bash
 sudo dnf install <package-name>
 ```
 
-### Arch Linux
+**Arch Linux:**
 
 ```bash
 sudo pacman -S <package-name>
 ```
 
-Example installs:
+Example same app on all three: `ripgrep` — `apt install ripgrep`, `dnf install ripgrep`, `pacman -S ripgrep` (exact package names can differ slightly by distro).
 
-- Debian/Ubuntu: `sudo apt install ripgrep`
-- Fedora: `sudo dnf install ripgrep`
-- Arch: `sudo pacman -S ripgrep`
+## Upgrade installed packages
 
-## Update system packages
-
-### Debian/Ubuntu
+**Debian/Ubuntu:**
 
 ```bash
 sudo apt update
 sudo apt upgrade
 ```
 
-### Fedora
+**Fedora:**
 
 ```bash
 sudo dnf upgrade
 ```
 
-### Arch Linux
+**Arch** — **`Syu`** refreshes databases then upgrades (expect new packages only after a successful sync):
 
 ```bash
 sudo pacman -Syu
@@ -66,74 +62,81 @@ sudo pacman -Syu
 
 ## Remove a package
 
-### Debian/Ubuntu
+**Debian/Ubuntu** — remove; add **`--purge`** to drop config files:
 
 ```bash
 sudo apt remove <package-name>
-```
-
-Use `--purge` to also remove config files:
-
-```bash
 sudo apt remove --purge <package-name>
 ```
 
-### Fedora
+**Fedora:**
 
 ```bash
 sudo dnf remove <package-name>
 ```
 
-### Arch Linux
+**Arch:**
 
 ```bash
 sudo pacman -R <package-name>
 ```
 
-## Search for packages
+## Search package indexes
 
-### Debian/Ubuntu
+**Debian/Ubuntu:**
 
 ```bash
 apt search <term>
 ```
 
-### Fedora
+**Fedora:**
 
 ```bash
 dnf search <term>
 ```
 
-### Arch Linux
+**Arch:**
 
 ```bash
 pacman -Ss <term>
 ```
 
-## Notes
+## Fedora Atomic / Silverblue: what is different
 
-- `apt` is generally preferred for interactive usage on Ubuntu.
-- `dnf` is the default package manager on Fedora.
-- `pacman` is the native package manager for Arch Linux.
+**Silverblue** (and related Atomic Desktops) use an **immutable** base image: the host is updated as a **whole image**, not endlessly mutated in place. Rollbacks switch boot entries. Typical software paths:
 
-## Common mistakes
+1. **Flatpak** — desktop apps.
+2. **Toolbox (`toolbox`)** — mutable CLI/dev environments (DNF inside the container).
+3. **`rpm-ostree` layering** — extra RPMs fused into the host image when you truly need them on the base.
 
-- Copying commands from another distro family.
-- Forgetting to refresh metadata first (`apt update`, `pacman -Syu`).
-- Confusing package names across distros.
+Do **not** rely on **`sudo dnf install`** on the host the way you would on classic Fedora Workstation.
 
-## Safety notes
+## Toolbox workflow (CLI and dev packages)
 
-- Package installs/removals modify the system.
-- Review prompts before confirming, especially on production machines.
+Create and enter a toolbox; use **DNF inside** for compilers, language stacks, etc.:
 
-## Related commands
+```bash
+toolbox create
+toolbox enter
+sudo dnf install <dev-package>
+```
 
-- `flatpak`, `rpm-ostree` (Silverblue host), `toolbox` (Silverblue dev workflows)
+Prefer this for development so the host image stays minimal.
 
-## Sources
+## rpm-ostree: layer packages on the host
 
-- Ubuntu package management docs: https://documentation.ubuntu.com/server/how-to/software/package-management/index.html
-- DNF command reference: https://dnf.readthedocs.io/en/stable/command_ref.html
-- ArchWiki pacman: https://wiki.archlinux.org/title/Pacman
+Install an RPM into the **pending** deployment, then **reboot** so you boot into the new image:
 
+```bash
+rpm-ostree install <package-name>
+systemctl reboot
+```
+
+Check status and upgrade the image:
+
+```bash
+rpm-ostree status
+rpm-ostree upgrade
+```
+
+**When to use what:** desktop app → **Flatpak**; dev shell → **Toolbox**; driver/kernel/module that must live on host → consider **layering** sparingly.

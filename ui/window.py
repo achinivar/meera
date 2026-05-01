@@ -33,6 +33,21 @@ from tools.runner import detect_distro
 
 _LEGACY_TOOL_CALL_RE = re.compile(r'\{\s*"tool"\s*:\s*"[A-Za-z_][A-Za-z0-9_]*"', re.DOTALL)
 
+# ATX headings: # / ## / ### only (not ####+). Optional up to 3 leading spaces; optional closing # suffix.
+_ATX_HEADING_LINE_RE = re.compile(r"^ {0,3}(#{1,3})(?!#)\s+(.+)$")
+
+
+def _parse_atx_heading_line(line: str) -> tuple[int, str] | None:
+    """Return (level 1–3, title) for ATX headings, or None."""
+    s = line.rstrip("\r\n")
+    m = _ATX_HEADING_LINE_RE.match(s)
+    if not m:
+        return None
+    level = len(m.group(1))
+    title = m.group(2).rstrip()
+    title = re.sub(r"\s+#+\s*$", "", title)
+    return (level, title)
+
 
 def _looks_like_legacy_tool_call(content: str) -> bool:
     """True for old Phase 3 sessions where assistant messages stored raw {"tool": ...} JSON."""
@@ -365,6 +380,30 @@ class MeeraWindow(Gtk.Window):
                 family="monospace",
                 background="#1f1f1f",
             )
+            self.heading_h1_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h1",
+                weight=Pango.Weight.BOLD,
+                size_points=15.0,
+                pixels_above_lines=10,
+                pixels_below_lines=4,
+            )
+            self.heading_h2_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h2",
+                weight=Pango.Weight.BOLD,
+                size_points=13.0,
+                pixels_above_lines=8,
+                pixels_below_lines=3,
+            )
+            self.heading_h3_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h3",
+                weight=Pango.Weight.BOLD,
+                size_points=12.0,
+                pixels_above_lines=6,
+                pixels_below_lines=2,
+            )
         else:
             # Light theme: black text
             self.text_tag = self._ensure_tag(
@@ -404,6 +443,30 @@ class MeeraWindow(Gtk.Window):
                 foreground="#1f1f1f",
                 family="monospace",
                 background="#efefef",
+            )
+            self.heading_h1_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h1",
+                weight=Pango.Weight.BOLD,
+                size_points=15.0,
+                pixels_above_lines=10,
+                pixels_below_lines=4,
+            )
+            self.heading_h2_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h2",
+                weight=Pango.Weight.BOLD,
+                size_points=13.0,
+                pixels_above_lines=8,
+                pixels_below_lines=3,
+            )
+            self.heading_h3_tag = self._ensure_tag(
+                self.chat_buf,
+                "heading_h3",
+                weight=Pango.Weight.BOLD,
+                size_points=12.0,
+                pixels_above_lines=6,
+                pixels_below_lines=2,
             )
         # Keep white_tag as alias for backward compatibility
         self.white_tag = self.text_tag
@@ -576,7 +639,11 @@ class MeeraWindow(Gtk.Window):
         self._link_tags[tag_name] = url
         return link_tag
 
-    def _insert_inline_markdown(self, text: str):
+    def _insert_inline_markdown(
+        self, text: str, base_tags: list[Gtk.TextTag] | None = None
+    ):
+        if base_tags is None:
+            base_tags = [self.text_tag]
         token_pattern = re.compile(
             r"(\[([^\]]+)\]\((https?://[^\s)]+)\))|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(`([^`]+)`)|(\*([^*]+)\*)|(_([^_]+)_)"
         )
@@ -584,26 +651,26 @@ class MeeraWindow(Gtk.Window):
         for match in token_pattern.finditer(text):
             start, end = match.span()
             if start > pos:
-                self._insert_with_tags(text[pos:start], [self.text_tag])
+                self._insert_with_tags(text[pos:start], base_tags)
 
             if match.group(1):
                 label = match.group(2)
                 url = match.group(3)
-                self._insert_with_tags(label, [self.text_tag, self._link_tag_for_url(url)])
+                self._insert_with_tags(label, base_tags + [self._link_tag_for_url(url)])
             elif match.group(4):
-                self._insert_with_tags(match.group(5), [self.text_tag, self.bold_tag])
+                self._insert_with_tags(match.group(5), base_tags + [self.bold_tag])
             elif match.group(6):
-                self._insert_with_tags(match.group(7), [self.text_tag, self.bold_tag])
+                self._insert_with_tags(match.group(7), base_tags + [self.bold_tag])
             elif match.group(8):
                 self._insert_with_tags(match.group(9), [self.inline_code_tag])
             elif match.group(10):
-                self._insert_with_tags(match.group(11), [self.text_tag, self.italic_tag])
+                self._insert_with_tags(match.group(11), base_tags + [self.italic_tag])
             elif match.group(12):
-                self._insert_with_tags(match.group(13), [self.text_tag, self.italic_tag])
+                self._insert_with_tags(match.group(13), base_tags + [self.italic_tag])
             pos = end
 
         if pos < len(text):
-            self._insert_with_tags(text[pos:], [self.text_tag])
+            self._insert_with_tags(text[pos:], base_tags)
 
     def _insert_markdown(self, text: str):
         lines = text.splitlines(keepends=True)
@@ -621,7 +688,17 @@ class MeeraWindow(Gtk.Window):
 
             has_newline = line.endswith("\n")
             content = line[:-1] if has_newline else line
-            self._insert_inline_markdown(content)
+            heading = _parse_atx_heading_line(content)
+            if heading is not None:
+                level, title = heading
+                heading_tag = (
+                    self.heading_h1_tag
+                    if level == 1
+                    else (self.heading_h2_tag if level == 2 else self.heading_h3_tag)
+                )
+                self._insert_inline_markdown(title, [self.text_tag, heading_tag])
+            else:
+                self._insert_inline_markdown(content)
             if has_newline:
                 self._insert_with_tags("\n", [self.text_tag])
 

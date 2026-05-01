@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+import sys
 import tempfile
 import uuid
 from collections.abc import Mapping
@@ -240,43 +242,38 @@ def _duration_to_ics(duration_minutes: int) -> str:
     return f"PT{duration_minutes}M"
 
 
-def _localize_naive_to_system(dt: datetime) -> datetime:
-    local = datetime.now().astimezone().tzinfo
-    if local is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.replace(tzinfo=local)
+# Calendar start: copy date/time digits from the model string into ICS (no conversion).
+_START_ARG_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
 
-def _parse_event_start(start: str) -> datetime | ToolResult:
+def _ics_dtstart_value_from_start_arg(start: str) -> str | ToolResult:
     s = start.strip()
     if not s:
         return tool_result_err(
-            "start must be a non-empty ISO 8601 datetime (e.g. 2024-05-01T09:00:00Z).",
+            "start must be a non-empty datetime like 2024-05-01T09:00:00Z.",
             "VALIDATION_ERROR",
         )
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-    except ValueError:
+    m = _START_ARG_RE.match(s)
+    if not m:
         return tool_result_err(
-            "start must be ISO 8601 (e.g. 2024-05-01T09:00:00 or 2024-05-01T14:00:00Z).",
+            "start must look like 2024-05-01T09:00:00 or 2024-05-01T14:00:00Z.",
             "VALIDATION_ERROR",
         )
-    if dt.tzinfo is None:
-        dt = _localize_naive_to_system(dt)
-    return dt.astimezone(timezone.utc)
+    y, mo, d, h, mi, se = m.groups()
+    return f"{y}{mo}{d}T{h}{mi}{se}Z"
 
 
 def _build_vevent_ics_document(
     summary: str,
-    start_utc: datetime,
+    dtstart_value: str,
     duration_minutes: int,
 ) -> str:
-    """Return a minimal VEVENT ICS document (CRLF), UTC DTSTART, DURATION."""
+    """Return a minimal VEVENT ICS (CRLF). dtstart_value is the full DTSTART payload (…Z)."""
     uid = f"{uuid.uuid4()}@meera"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dtstart = start_utc.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dtstart = dtstart_value
     dur = _duration_to_ics(duration_minutes)
     summ = _ics_text_escape(summary.strip())
     lines = [
@@ -317,11 +314,13 @@ def _gnome_calendar_event_add(params: Mapping[str, Any]) -> ToolResult:
             "VALIDATION_ERROR",
         )
 
-    start_parsed = _parse_event_start(start_raw)
-    if isinstance(start_parsed, ToolResult):
-        return start_parsed
+    dtstart_value = _ics_dtstart_value_from_start_arg(start_raw)
+    if isinstance(dtstart_value, ToolResult):
+        return dtstart_value
 
-    ics_body = _build_vevent_ics_document(text, start_parsed, duration_minutes)
+    ics_body = _build_vevent_ics_document(text, dtstart_value, duration_minutes)
+    if os.environ.get("MEERA_DEBUG_RETRIEVAL", "").strip().lower() in ("1", "true", "yes", "on"):
+        print(f"[retrieval] calendar ics (exact file content passed to gio open):\n{ics_body}", file=sys.stderr, flush=True)
     ics_bytes = ics_body.encode("utf-8")
 
     fd: int | None = None
@@ -363,7 +362,7 @@ def _gnome_calendar_event_add(params: Mapping[str, Any]) -> ToolResult:
         "Calendar invite written and opened; confirm import in GNOME Calendar if prompted.",
         data={
             "summary": text,
-            "start_utc": start_parsed.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "start": start_raw.strip(),
             "duration_minutes": duration_minutes,
         },
     )
@@ -385,9 +384,8 @@ TOOLS: list[ToolSpec] = [
             "list all reminders",
             "what reminders do I have",
             "show my pending reminders",
-            "show active timers",
-            "list user timers",
-            "what timers are scheduled",
+            "show active reminders",
+            "what reminders are scheduled",
         ],
     ),
     ToolSpec(
@@ -453,8 +451,8 @@ TOOLS: list[ToolSpec] = [
         description=(
             "Add or schedule a calendar event (meeting, appointment, lunch, etc.) for GNOME "
             "Calendar by writing a temporary .ics file and opening it with gio so the user can "
-            "import the event into the Evolution/GNOME Calendar pipeline. Requires an ISO 8601 "
-            "start time; naive times are interpreted in the system timezone."
+            "import the event into the Evolution/GNOME Calendar pipeline. The start string's "
+            "date and time digits are written to the .ics DTSTART as-is (compact form with Z)."
         ),
         parameters=[
             ToolParam(
@@ -468,8 +466,8 @@ TOOLS: list[ToolSpec] = [
                 param_type="string",
                 required=True,
                 description=(
-                    "Event start as ISO 8601, e.g. 2024-05-01T14:00:00Z or "
-                    "2024-05-01T09:00:00 (local if no offset)."
+                    "Event start: YYYY-MM-DDTHH:MM:SS with optional Z or ±HH:MM offset; "
+                    "those clock digits are copied into DTSTART (no timezone conversion)."
                 ),
             ),
             ToolParam(
@@ -483,7 +481,6 @@ TOOLS: list[ToolSpec] = [
         read_only=False,
         exemplars=[
             "add lunch to my calendar tomorrow at 1pm",
-            "can you add lunch on my calendar tomorrow at 1pm",
             "put lunch on the calendar tomorrow at noon",
             "schedule a meeting tomorrow at 3pm for an hour",
             "add a calendar event team standup tomorrow at 9",
@@ -492,7 +489,7 @@ TOOLS: list[ToolSpec] = [
             "block off 2 hours on my calendar tomorrow morning for deep work",
             "new calendar entry coffee with Sam Thursday 4pm",
             "book 30 minutes on my calendar for standup",
-            "add an event titled budget review starting 2024-05-01T15:00:00Z lasting 90 minutes",
+            "add an event titled budget review starting 2026-05-01T15:00:00 local lasting 90 minutes",
             "GNOME calendar add event sync interview Monday 11am",
             "remind me on the calendar that I have a flight at 7am",
         ],

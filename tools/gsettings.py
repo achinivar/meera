@@ -336,12 +336,11 @@ TOOLS: list[ToolSpec] = [
         handler=_color_scheme_status,
         read_only=True,
         exemplars=[
-            "what's my color scheme",
             "am I in dark mode",
+            "am I in light mode",
             "is dark mode on",
             "what theme am I using",
             "do I have dark mode enabled",
-            "current color scheme",
         ],
     ),
     ToolSpec(
@@ -450,7 +449,6 @@ TOOLS: list[ToolSpec] = [
             "stop grouping alt tab by application",
             "restore default alt tab gnome",
             "reset alt tab to grouped apps",
-            "put alt tab back to switching applications",
             "how to alt tab between all windows",
         ],
     ),

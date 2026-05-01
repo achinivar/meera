@@ -1,41 +1,52 @@
-# Process Management Basics
+# Processes, jobs, and systemd services
 
-## What it is
+## Overview
 
-Process management commands let you inspect, prioritize, and stop running programs.
+**User processes** — inspect with **`ps`**/**`pgrep`**, stop with **`kill`**/**`pkill`**. **systemd** manages **services**; use **`journalctl -u <unit>`** for service logs, not only **`ps`**. A **wrong unit name** or typo in **`systemctl`** makes commands look like “nothing is wrong” while the real service has another name.
 
-## When to use it
+**Safety:** confirm PID/name before **`kill -9`** or **`pkill`**—they can match or terminate more than you intend. Service start/stop affects all users.
 
-Use these commands when apps freeze, consume too much CPU/RAM, or need to run in background.
+**Sources:** [ps(1)](https://man7.org/linux/man-pages/man1/ps.1.html), [kill(1)](https://man7.org/linux/man-pages/man1/kill.1.html), [systemctl](https://www.freedesktop.org/software/systemd/man/systemctl.html), [journalctl](https://www.freedesktop.org/software/systemd/man/journalctl.html).
 
-## View processes
+## View processes, filter by name, and shell jobs
+
+**Full listing (BSD-style)** — common on desktops; shows USER, PID, command:
 
 ```bash
 ps aux
+```
+
+**POSIX-style** tree of parent/child PIDs:
+
+```bash
 ps -ef
+```
+
+**Narrow to one app** — pipe into `grep` (your search also appears as a `grep` line; that is normal):
+
+```bash
+ps aux | grep firefox
+```
+
+**Cleaner name search** without extra `grep` noise:
+
+```bash
+pgrep -a firefox
+```
+
+**Live** resource view:
+
+```bash
 top
 ```
 
-If installed, `htop` provides a friendlier interactive view:
+**Interactive** monitor if installed:
 
 ```bash
 htop
 ```
 
-## Stop processes
-
-```bash
-kill <pid>
-kill -9 <pid>
-pkill <name>
-```
-
-Guideline:
-
-- Try normal termination (`kill`) first.
-- Use `-9` only when a process does not respond.
-
-## Background jobs in shell
+**Background job** in the current shell — run, list, bring to foreground:
 
 ```bash
 sleep 100 &
@@ -43,24 +54,62 @@ jobs
 fg %1
 ```
 
-## Common mistakes
+## Stop and signal processes
 
-- Killing the wrong PID.
-- Using `kill -9` too early.
-- Forgetting that `pkill` may match multiple processes.
+**Polite** stop by PID (SIGTERM):
 
-## Safety notes
+```bash
+kill <pid>
+```
 
-- Prefer graceful termination first (`kill` / SIGTERM).
-- Confirm command target with `ps` before sending signals.
+**Force** kill when the process ignores SIGTERM:
 
-## Related commands
+```bash
+kill -9 <pid>
+```
 
-- `nice`, `renice`, `systemctl`, `journalctl`
+**By pattern** — **`pkill`** can match **multiple** processes; use **`pgrep <pattern>`** first to see PIDs:
 
-## Sources
+```bash
+pkill firefox
+```
 
-- `ps` man page: https://man7.org/linux/man-pages/man1/ps.1.html
-- `kill` man page: https://man7.org/linux/man-pages/man1/kill.1.html
-- `top` man page: https://man7.org/linux/man-pages/man1/top.1.html
+Prefer **`kill <pid>`** after identifying the PID; use **`-9`** only when necessary.
 
+## systemd: services, boot, and journal logs
+
+**Status** — replace `sshd` with your unit (`systemctl` usually accepts the short name):
+
+```bash
+systemctl status sshd
+systemctl status NetworkManager
+```
+
+**Start, stop, restart** (typically need root):
+
+```bash
+sudo systemctl start <service>
+sudo systemctl stop <service>
+sudo systemctl restart <service>
+```
+
+**Enable or disable** starting at boot:
+
+```bash
+sudo systemctl enable <service>
+sudo systemctl disable <service>
+```
+
+**Logs for one unit** — all messages, or last 100 lines:
+
+```bash
+journalctl -u <service>
+journalctl -u <service> -n 100
+```
+
+**Follow** all logs live, or **this boot only**:
+
+```bash
+journalctl -f
+journalctl -b
+```

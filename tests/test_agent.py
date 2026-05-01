@@ -240,6 +240,9 @@ class TestSystemPrompt(unittest.TestCase):
         s = build_agent_system_prompt(rag_hits=None, distro="fedora", base_identity="You are Meera.")
         self.assertIn("You are Meera.", s)
         self.assertIn("Host distro: fedora.", s)
+        self.assertIn("Current local date:", s)
+        self.assertIn("time:", s)
+        self.assertNotIn("UTC offset", s)
         self.assertNotIn("<KNOWLEDGE", s)
 
     def test_prompt_inlines_rag_blocks(self) -> None:

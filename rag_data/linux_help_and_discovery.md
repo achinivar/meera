@@ -1,67 +1,57 @@
-# Linux Help and Discovery
+# Linux help, man pages, and discovery
 
-## What it is
+## Overview
 
-This guide covers built-in ways to discover commands and read documentation directly in Linux.
+Linux ships with **inline help**: **`--help`** for quick flags, **`man`** for structured manuals, **`apropos`** to search names/descriptions. **`which`** and **`type`** show where a command comes from (binary vs shell builtin). For **flag syntax that matches your install**, prefer **`man`** / **`--help`** on **this machine** over random web articles (versions differ).
 
-## When to use it
+**Safety:** for destructive commands, read **`man`** / **`--help`** before running with **`sudo`**.
 
-Use these commands whenever you find an unfamiliar command or need authoritative syntax quickly.
+**Sources:** [man-pages project](https://www.kernel.org/doc/man-pages/), [Bash builtins](https://www.gnu.org/software/bash/manual/bash.html#Bash-Builtins).
 
-## Built-in help
+## --help and man pages
 
-```bash
-<command> --help
-```
-
-Examples:
+**`--help`** — many binaries print a short usage summary to the terminal (good for a quick flag reminder):
 
 ```bash
 grep --help
 tar --help
 ```
 
-## Manual pages
+**`man`** — full manual; **section 1** is the default for user programs:
 
 ```bash
 man grep
 man tar
+```
+
+**Other sections** — config and file formats live elsewhere; if the page is the wrong topic, you may need another section number:
+
+```bash
 man 5 passwd
 ```
 
-`man 5 passwd` means section 5 (file formats), while section 1 is user commands.
+**Section 1** = programs, **5** = config/file formats.
 
-## Discover command paths and types
+## Locate the executable and builtins
+
+**Path** to a binary (if on `PATH`):
 
 ```bash
 which python3
+```
+
+**How the shell resolves** a name (alias, function, builtin, file):
+
+```bash
 type cd
 ```
 
-`type` is especially useful because it can show shell builtins, aliases, and functions.
+`type` is especially useful because **`cd`** is often a **shell builtin**, not `/usr/bin/cd`.
 
-## Search man page names/descriptions
+## apropos: search manual summaries
+
+Keyword search over what `man` knows:
 
 ```bash
 apropos network
 ```
-
-## Common mistakes
-
-- Reading the wrong man section.
-- Assuming online guides match your installed command version.
-- Skipping `--help` and missing quick usage hints.
-
-## Safety notes
-
-- Prefer official manuals/man pages when commands affect system state.
-
-## Related commands
-
-- `info`, `whatis`, `which`, `type`, `help`
-
-## Sources
-
-- Linux man-pages project: https://www.kernel.org/doc/man-pages/
-- Bash builtin `help` and `type`: https://www.gnu.org/software/bash/manual/bash.html#Bash-Builtins
-

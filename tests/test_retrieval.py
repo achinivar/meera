@@ -29,6 +29,13 @@ from retrieval import (  # noqa: E402
 )
 from retrieval.index import KIND_RAG, KIND_TOOL  # noqa: E402
 
+try:
+    import transformers  # noqa: F401  # type: ignore[import-not-found]
+
+    _HAVE_TRANSFORMERS = True
+except ImportError:
+    _HAVE_TRANSFORMERS = False
+
 
 class TestEmbeddingsFake(unittest.TestCase):
     def test_unit_norm(self) -> None:
@@ -218,6 +225,60 @@ class TestRagChunkSizeCap(unittest.TestCase):
                 "Oversized rag_data H2 chunk(s) would blow past the "
                 f"{self.EMBED_MODEL_TOKEN_CAP}-token embedding-model cap; "
                 "split the H2 into smaller sections:\n" + details
+            )
+
+
+@unittest.skipUnless(
+    _HAVE_TRANSFORMERS,
+    "pip install transformers sentencepiece to run BGE tokenizer checks on rag_data",
+)
+class TestRagBgeTokenizerCap(unittest.TestCase):
+    """Each rag_data H2 chunk must stay within bge-small-en-v1.5's 512-token cap.
+
+    Uses the real Hugging Face tokenizer (not the char heuristic in
+    TestRagChunkSizeCap). Skips when `transformers` is not installed so the
+    default test suite stays dependency-light.
+    """
+
+    EMBED_MODEL_TOKEN_CAP = 512
+    BGE_MODEL_ID = "BAAI/bge-small-en-v1.5"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from transformers import AutoTokenizer  # noqa: PLC0415
+
+        cls._tokenizer = AutoTokenizer.from_pretrained(
+            cls.BGE_MODEL_ID,
+            trust_remote_code=True,
+        )
+
+    def test_rag_chunks_within_bge_token_cap(self) -> None:
+        rag_root = Path(__file__).resolve().parent.parent / "rag_data"
+        chunks = chunk_rag_directory(rag_root)
+        self.assertGreater(
+            len(chunks),
+            0,
+            f"no rag chunks under {rag_root} (add H2 sections or check paths)",
+        )
+        cap = self.EMBED_MODEL_TOKEN_CAP
+        overs: list[tuple[str, str, int]] = []
+        for c in chunks:
+            n = len(
+                self._tokenizer.encode(
+                    c.index_text,
+                    add_special_tokens=True,
+                )
+            )
+            if n > cap:
+                overs.append((c.doc_path, c.section, n))
+        if overs:
+            details = "\n".join(
+                f"  {path} :: {section} — {n} tokens (cap {cap})"
+                for path, section, n in overs
+            )
+            self.fail(
+                "RAG chunk(s) exceed the embedding model token cap; "
+                f"split the H2 into smaller sections:\n{details}"
             )
 
 
