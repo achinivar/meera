@@ -1,0 +1,45 @@
+name: Feature Request
+description: Suggest an idea or new capability for Meera
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: Describe the problem or limitation you're running into.
+      placeholder: "I often want to..., but Meera doesn't..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: What would you like Meera to do?
+      placeholder: "It would be great if Meera could..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: What area does this relate to?
+      multiple: true
+      options:
+        - New tool / system control
+        - RAG knowledge base
+        - Chat UI
+        - Performance
+        - Installation / setup
+        - Other
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any screenshots, examples, or extra details.
