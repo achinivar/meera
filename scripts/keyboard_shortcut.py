@@ -107,6 +107,21 @@ def _binding_reserved(binding: str) -> bool:
     return has_control and not has_non_editing_modifier and key in COMMON_CONTROL_KEYS
 
 
+def _remove_binding() -> int:
+    """Remove Meera's entry from GNOME custom keybindings and clear its relocatable keys."""
+    if not _gsettings_available():
+        return 0
+    paths = _custom_paths()
+    if MEERA_BINDING_PATH not in paths:
+        return 0
+    filtered = [p for p in paths if p != MEERA_BINDING_PATH]
+    if _set_custom_paths(filtered) != 0:
+        return 1
+    schema_path = f"{CUSTOM_BINDING_SCHEMA}:{MEERA_BINDING_PATH}"
+    _run(["gsettings", "reset-recursively", schema_path])
+    return 0
+
+
 def _set_binding(binding: str, command: str) -> int:
     if not _gsettings_available():
         print("GNOME gsettings is not available.", file=sys.stderr)
@@ -143,10 +158,15 @@ def _set_binding(binding: str, command: str) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("Usage: keyboard_shortcut.py get|set BINDING COMMAND|check BINDING", file=sys.stderr)
+        print(
+            "Usage: keyboard_shortcut.py get|set BINDING COMMAND|check BINDING|remove",
+            file=sys.stderr,
+        )
         return 2
 
     command = argv[1]
+    if command == "remove":
+        return _remove_binding()
     if command == "get":
         print(_current_binding())
         return 0
@@ -157,7 +177,10 @@ def main(argv: list[str]) -> int:
     if command == "set" and len(argv) == 4:
         return _set_binding(argv[2], argv[3])
 
-    print("Usage: keyboard_shortcut.py get|set BINDING COMMAND|check BINDING", file=sys.stderr)
+    print(
+        "Usage: keyboard_shortcut.py get|set BINDING COMMAND|check BINDING|remove",
+        file=sys.stderr,
+    )
     return 2
 
 

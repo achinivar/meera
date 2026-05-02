@@ -618,6 +618,10 @@ cmd_uninstall() {
   esac
 
   cmd_unload_model
+  _keyboard_shortcut_helper="$MEERA_APP_DIR/scripts/keyboard_shortcut.py"
+  if [ -f "$_keyboard_shortcut_helper" ]; then
+    python3 "$_keyboard_shortcut_helper" remove || warn "Could not remove GNOME keyboard shortcut (remove it manually in Settings if it remains)."
+  fi
   remove_dir_if_exists "$MEERA_APP_DIR"
   remove_dir_if_exists "$MEERA_DATA_DIR"
   remove_dir_if_exists "$MEERA_CONFIG_DIR"
@@ -635,6 +639,7 @@ case "${1:-run}" in
   logs) cmd_logs ;;
   restart-model) cmd_restart_model ;;
   unload-model) cmd_unload_model ;;
+  version|--version|-v) printf '%s\n' "$MEERA_VERSION" ;;
   *)
     cat <<'EOF'
 Usage: meera [command]
@@ -647,6 +652,7 @@ Commands:
   logs            Show recent Meera logs
   restart-model   Restart local llama.cpp model servers
   unload-model    Stop local llama.cpp model servers
+  version         Print Meera version
 EOF
     exit 2
     ;;
