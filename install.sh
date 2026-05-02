@@ -8,7 +8,7 @@ set -eu
 
 MEERA_VERSION="${MEERA_VERSION:-v0.2}"
 MEERA_RELEASE_URL="${MEERA_RELEASE_URL:-https://github.com/achinivar/meera/releases/download/v0.2/meera-v0.2.tar.gz}"
-MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-787f2fe38fb892f437913321a9006ad017016099f3e479cd34a5d040cf3397ab}"
+MEERA_RELEASE_SHA256="${MEERA_RELEASE_SHA256:-9d5864ea15c84a7f387cefad229e97dc9754dd722beeba11399ffbd0e4370e0e}"
 MEERA_INSTALLER_URL="${MEERA_INSTALLER_URL:-https://github.com/achinivar/meera/releases/latest/download/install.sh}"
 
 MEERA_LLAMA_CPP_TAG="${MEERA_LLAMA_CPP_TAG:-b8672}"

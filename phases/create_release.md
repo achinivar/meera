@@ -32,6 +32,7 @@ tar --exclude='.git' \
     --exclude='venv' \
     --exclude='env' \
     --exclude='install.sh' \
+    --exclude='phases' \
     -czf ~/meera-v0.1.tar.gz .
 ```
 
