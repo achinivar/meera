@@ -61,7 +61,10 @@ The first launch runs a short GUI setup (autostart and keyboard shortcut options
 - Meera runs local `llama.cpp` servers for chat and embeddings. Default setup downloads pinned artifacts and verifies checksums where configured.
 - Chat history is saved automatically and can be loaded from the App menu.
 
-## Extending Meera
+## Development
+
+- For details on the architecture, tool system, RAG pipeline and fast path, see the [wiki](https://github.com/achinivar/meera/wiki)
+- For reporting bugs or requesting new features, please use the appropriate template in [issues](https://github.com/achinivar/meera/issues)
 
 ### Key directories
 
@@ -72,11 +75,9 @@ The first launch runs a short GUI setup (autostart and keyboard shortcut options
 
 ### Adding capabilities
 
-- **Adding a tool** — Create a module under `tools/`, define a handler with a `ToolSpec`, add exemplars for intent matching, and register it in `tools/registry.py`. See the [wiki](https://github.com/achinivar/meera/wiki#adding-new-tools) for a full walkthrough.
-- **Adding RAG data** — Drop a Markdown file into `rag_data/` using H1/H2 headings to define chunks. Meera indexes it at startup so it's available for retrieval. See the [wiki](https://github.com/achinivar/meera/wiki#adding-rag-data) for guidelines and constraints.
-- **Adding a fast-path regex** — Define heuristic patterns in `agent.py` for high-frequency, structurally predictable commands that skip retrieval and go straight to tool execution. See the [wiki](https://github.com/achinivar/meera/wiki#adding-fast-path-patterns) for design notes and pitfalls.
-
-## Development
+- **Adding a tool** — Create a module under `tools/`, define a handler with a `ToolSpec`, add exemplars for intent matching, and register it in `tools/registry.py`. See the [wiki](https://github.com/achinivar/meera/wiki#tool-system) for a full walkthrough.
+- **Adding RAG data** — Drop a Markdown file into `rag_data/` using H1/H2 headings to define chunks. Meera indexes it at startup so it's available for retrieval. See the [wiki](https://github.com/achinivar/meera/wiki#rag-data) for guidelines and constraints.
+- **Adding a fast-path regex** — Define heuristic patterns in `agent.py` for high-frequency, structurally predictable commands that skip retrieval and go straight to tool execution. See the [wiki](https://github.com/achinivar/meera/wiki#fast-path-system) for design notes and pitfalls.
 
 ### Debug options
 
@@ -85,8 +86,3 @@ The first launch runs a short GUI setup (autostart and keyboard shortcut options
 - `MEERA_DEBUG_TOOL_CALLS` — set `1` to show tool debug lines in UI
 - `MEERA_DEBUG_RETRIEVAL` — set `1` to show retrieval debug output
 
-### Running tests
-
-```bash
-python3 -m unittest discover -s tests -v
-```

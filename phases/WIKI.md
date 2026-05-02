@@ -3,12 +3,10 @@
 ## Table of Contents
 - [Model Loading & Serving](#model-loading--serving)
 - [Request Flow & Agent Loop](#request-flow--agent-loop)
-- [Fast-Path System](#fast-path-system)
 - [Tool System](#tool-system)
 - [RAG Data](#rag-data)
-- [Adding New Tools](#adding-new-tools)
-- [Adding RAG Data](#adding-rag-data)
-- [Adding Fast-Path Patterns](#adding-fast-path-patterns)
+- [Fast-Path System](#fast-path-system)
+- [Configuration Reference](#configuration-reference)
 
 ---
 
@@ -31,7 +29,6 @@ Meera uses two separate local `llama.cpp` servers, managed by the launcher scrip
    - Embed server: `llama-server -m <embed_model> --port 8081 --embeddings -c 512`
 5. **Health check** — polls `/v1/models` on each server until reachable (up to 15s wait).
 6. **State persistence** — writes ports and URLs to runtime state file, exports `MEERA_BACKEND=llamacpp`, `MEERA_LLAMACPP_URL`, `MEERA_EMBED_URL`.
-7. **Python app** — `exec python3 meera.py` from the app directory.
 
 ### Runtime Fallback
 
@@ -39,11 +36,7 @@ If Vulkan fails at startup (VRAM pressure, driver issues), the launcher automati
 
 ### Inference Dispatch
 
-`inference.py` is the dispatcher. The `MEERA_BACKEND` env var selects:
-- **`llamacpp`** (default) → `llamacpp_backend.py` — OpenAI-compatible `/v1/chat/completions`, supports native tool calling.
-- **`ollama`** → `backend.py` — Ollama `/api/chat`, no tool calling (falls back to chat-only mode).
-
-Both backends yield streaming `{"kind": "content", "text": "..."}` events. The llama.cpp backend additionally yields `{"kind": "tool_calls", "tool_calls": [...]}` when the model requests tool execution.
+`llamacpp_backend.py` calls the llama.cpp chat server at port 8080 via the OpenAI-compatible `/v1/chat/completions` endpoint. Streaming yields `{"kind": "content", "text": "..."}` events progressively, then `{"kind": "tool_calls", "tool_calls": [...]}` when the model requests tool execution.
 
 ---
 
@@ -68,10 +61,6 @@ A **margin check** decides whether to run tool mode or chat mode: if the top too
 ### Cross-Turn Memory
 Tool results are compacted into `[Tool memory]` assistant messages so they persist across turns and survive session reload.
 
----
-
-## Fast-Path System
-
 ### Architecture Diagram
 
 ```
@@ -80,16 +69,16 @@ User message
      ▼
 ┌─────────────────────────────┐
 │  FAST-PATH REGEX MATCH      │  ← _HEURISTIC_PATTERNS (ordered, most-specific first)
-│  (agent.py lines ~192-245)  │     re.IGNORECASE, first match wins
-└─────────┬───────────────────┘
-    MATCH │                NO MATCH
-    ▼     │                ▼
-┌─────────┴─┐      ┌──────────────────────────┐
-│ Builder   │      │  RETRIVAL PIPELINE        │
+│                             │     re.IGNORECASE, first match wins
+└─────────-───────────────────┘
+    MATCH              NO MATCH
+      ▼                   ▼
+┌─────────-─┐      ┌──────────────────────────┐
+│ Builder   │      │  RETRIVAL PIPELINE       │
 │ function  │      │                          │
 │ returns   │      │  ┌────────────────────┐  │
-│ {tool,    │      │  │ Embed user message  │  │
-│  params}  │      │  └────────┬───────────┘  │
+│ {tool,    │      │  │ Embed user message │  │
+│  params}  │      │  └───────┬───-────────┘  │
 └─────┬─────┘      │          │               │
       │            │  ┌───────▼───────────┐   │
       │            │  │ Cosine query vs   │   │
@@ -109,11 +98,11 @@ User message
       │            │  │ top_tool >        │   │
       │            │  │ top_rag + margin? │   │
       │            │  └──┬──────────┬─────┘   │
-      │            │ YES│          │NO        │
-      │            │    ▼          ▼          │
+      │            │  YES│          │NO       │
+      │            │     ▼          ▼         │
       │            │  llm_tools  llm_chat     │
       │            │  (narrow    (RAG blocks  │
-      │            │   tools)     in prompt)   │
+      │            │   tools)     in prompt)  │
       │            └──────────────────────────┘
       ▼
 ┌─────────────────────────────┐
@@ -128,12 +117,6 @@ User message
 │                             │    role:tool or user message
 └─────────────────────────────┘
 ```
-
-### Key Properties
-- **Zero-cost skip** — fast-path avoids both the embedding call and the LLM tool-selection step. The LLM still summarizes the result.
-- **Order matters** — `_HEURISTIC_PATTERNS` is evaluated top-to-bottom; first match wins. More specific patterns must come before broader ones.
-- **Error tolerance** — if a builder function raises `ValueError` or `KeyError`, the match is skipped and the next pattern is tried, falling back to retrieval + LLM.
-- **All patterns use** `re.IGNORECASE` and `re.search()` (not full-string match).
 
 ---
 
@@ -165,11 +148,69 @@ tools/
 3. **`runner.run_tool(name, params)`** — looks up the spec, validates/coerces parameters against the schema, injects `distro`, executes the handler, catches all exceptions.
 4. **Exemplars → Index** — at startup, every exemplar string from every tool becomes an `IndexEntry(kind="tool_exemplar")` in the retrieval index.
 
-### Parameter Safety
-- String params capped at 8192 chars
-- Integer/boolean coercion with validation errors
-- `requires_elevation` tools blocked unless `allow_elevation=True`
-- Filesystem tools constrained to user's home directory
+---
+
+### Adding a New Tool
+
+#### Step 1: Create or edit a module under `tools/`
+
+Pick an existing module (e.g., `tools/gsettings.py` for GNOME settings) or create a new one (e.g., `tools/newthing.py`).
+
+#### Step 2: Define the handler function
+
+```python
+def _my_handler(params: Mapping[str, Any]) -> ToolResult:
+    _ = params["distro"]  # always present, injected by runner
+    value = params.get("some_param")
+    # ... do work ...
+    return tool_result_ok("It worked", data={"result": value})
+    # or on failure:
+    return tool_result_err("Something failed", "ERROR_CODE")
+```
+
+- Signature: `handler(args: dict) -> ToolResult`
+- The runner injects `distro` automatically; always consume it to avoid "unexpected parameter" errors.
+
+#### Step 3: Define the ToolSpec
+
+```python
+MY_TOOL = ToolSpec(
+    name="my_tool_name",
+    description="What this tool does, for the LLM's benefit.",
+    parameters=[
+        ToolParam(name="some_param", param_type="string", required=True, description="Description"),
+    ],
+    handler=_my_handler,
+    read_only=True,           # set False if the tool modifies system state
+    requires_elevation=False, # set True if root is needed
+    exemplars=[
+        "do the thing",
+        "perform that action please",
+        # ... 5-10 natural-language phrases users would type
+    ],
+)
+```
+
+#### Step 4: Export from the module
+
+```python
+TOOLS = [MY_TOOL]
+```
+
+#### Step 5: Register in `tools/registry.py`
+
+```python
+import tools.newthing as newthing_mod
+# ...
+merged: list[ToolSpec] = [
+    # ...
+    *newthing_mod.TOOLS,
+]
+```
+
+#### Step 6: Restart Meera
+
+The retrieval index rebuilds at startup, embedding all new exemplars. The test `tests/test_tools.py::test_every_tool_has_exemplars` enforces a minimum of 5 exemplars per tool.
 
 ---
 
@@ -207,84 +248,15 @@ rag_data/
 - Vectors are L2-normalized; cosine similarity = dot product
 - Index is pure Python (no numpy), sized for hundreds to low-thousands of entries
 
-### Retrieval at Query Time
-- User message is embedded → cosine-similarity query against all indexed entries
-- Results split into tool hits (deduped by tool name) and RAG hits (deduped by doc+section)
-- RAG hits are formatted as `<KNOWLEDGE doc="..." section="...">...</KNOWLEDGE>` blocks in the system prompt
-
 ---
 
-## Adding New Tools
+### Adding RAG Data
 
-### Step 1: Create or edit a module under `tools/`
-
-Pick an existing module (e.g., `tools/gsettings.py` for GNOME settings) or create a new one (e.g., `tools/newthing.py`).
-
-### Step 2: Define the handler function
-
-```python
-def _my_handler(params: Mapping[str, Any]) -> ToolResult:
-    _ = params["distro"]  # always present, injected by runner
-    value = params.get("some_param")
-    # ... do work ...
-    return tool_result_ok("It worked", data={"result": value})
-    # or on failure:
-    return tool_result_err("Something failed", "ERROR_CODE")
-```
-
-- Signature: `handler(args: dict) -> ToolResult`
-- The runner injects `distro` automatically; always consume it to avoid "unexpected parameter" errors.
-
-### Step 3: Define the ToolSpec
-
-```python
-MY_TOOL = ToolSpec(
-    name="my_tool_name",
-    description="What this tool does, for the LLM's benefit.",
-    parameters=[
-        ToolParam(name="some_param", param_type="string", required=True, description="Description"),
-    ],
-    handler=_my_handler,
-    read_only=True,           # set False if the tool modifies system state
-    requires_elevation=False, # set True if root is needed
-    exemplars=[
-        "do the thing",
-        "perform that action please",
-        # ... 5-10 natural-language phrases users would type
-    ],
-)
-```
-
-### Step 4: Export from the module
-
-```python
-TOOLS = [MY_TOOL]
-```
-
-### Step 5: Register in `tools/registry.py`
-
-```python
-import tools.newthing as newthing_mod
-# ...
-merged: list[ToolSpec] = [
-    # ...
-    *newthing_mod.TOOLS,
-]
-```
-
-### Step 6: Restart Meera
-
-The retrieval index rebuilds at startup, embedding all new exemplars. The test `tests/test_tools.py::test_every_tool_has_exemplars` enforces a minimum of 5 exemplars per tool.
-
----
-
-## Adding RAG Data
-
-### Step 1: Create a Markdown file in `rag_data/`
+#### Step 1: Create a Markdown file in `rag_data/`
 
 Use lowercase filename with `.md` extension (e.g., `new_topic.md`). `README.md` in that directory is excluded from indexing.
 
-### Step 2: Follow the heading structure
+#### Step 2: Follow the heading structure
 
 ```markdown
 # Document Title
@@ -300,34 +272,46 @@ Content for the second chunk...
 - **H2 headings** define chunk boundaries — each H2 becomes one retrievable chunk
 - H3+ headings are kept inside their parent H2 chunk (not used as boundaries)
 
-### Step 3: Keep chunks under 512 tokens
+#### Step 3: Keep chunks under 512 tokens
 
 The embedding model has a hard 512-token input cap. If a section is long, split it across multiple H2 headings. The test `tests/test_retrieval.py::test_no_rag_chunk_exceeds_embedding_cap` enforces this.
 
-### Step 4: Restart Meera
+#### Step 4: Restart Meera
 
 `retrieval/rag_chunker.py` reads the directory at startup, chunks are re-embedded, and new content is immediately queryable.
 
 ---
 
-## Adding Fast-Path Patterns
+## Fast-Path System
+
+### Key Properties
+- **Zero-cost skip** — fast-path avoids both the embedding call and the LLM tool-selection step. The LLM still summarizes the result.
+- **Order matters** — `_HEURISTIC_PATTERNS` is evaluated top-to-bottom; first match wins. More specific patterns must come before broader ones.
+- **Error tolerance** — if a builder function raises `ValueError` or `KeyError`, the match is skipped and the next pattern is tried, falling back to retrieval + LLM.
+- **All patterns use** `re.IGNORECASE` and `re.search()` (not full-string match).
+
+---
+
+### Adding a Fast-Path Pattern
 
 Use fast-path when a tool's trigger phrases are **narrow and structural** (fixed verbs, numbers, tokens). Fast-path runs **before** retrieval and the LLM, skipping the embedding call and tool-selection tokens. It still runs the tool and uses the LLM to summarize.
 
-### When fast-path is a good fit
+#### When fast-path is a good fit
 - High-frequency, repetitive phrasing (volume to N%, screenshot, time/date)
 - Parameters extractable from the regex alone (percent digits, on/off toggles)
 - Low false-positive risk (specific or line-anchored regexes)
 - Stable tool API
 
-### When to skip fast-path
+#### When to skip fast-path
 - Rare actions, wide natural-language variation
 - Fuzzy or ambiguous phrasing
 - Anything where retrieval + LLM tool choice is safer
 
+Over-broad regexes will misfire on normal chat — when unsure, skip the fast-path and rely on **exemplars** only.
+
 All logic lives in `agent.py` under `# ---- Heuristic fast-path patterns`.
 
-### Step 1: Add a builder function
+#### Step 1: Add a builder function
 
 ```python
 def _fp_my_builder(m: re.Match[str]) -> dict[str, Any]:
@@ -339,7 +323,7 @@ def _fp_my_builder(m: re.Match[str]) -> dict[str, Any]:
 - Use named capture groups (`(?P<name>...)`) in the regex
 - Clamp or validate values; let invalid matches raise so the agent falls back to retrieval + LLM
 
-### Step 2: Append to `_HEURISTIC_PATTERNS`
+#### Step 2: Append to `_HEURISTIC_PATTERNS`
 
 ```python
 _HEURISTIC_PATTERNS: list[tuple[str, Any]] = [
@@ -352,11 +336,11 @@ _HEURISTIC_PATTERNS: list[tuple[str, Any]] = [
 - All patterns use `re.IGNORECASE`
 - Patterns use `search()` on the whole message (not full-string match)
 
-### Step 3: Test
+#### Step 3: Test
 
 Add cases under `TestFastpath` in `tests/test_agent.py`, or exercise manually with `MEERA_DEBUG_TOOL_CALLS=1` and confirm `stage=fastpath` in the debug output.
 
-### Step 4: Restart Meera
+#### Step 4: Restart Meera
 
 ---
 
@@ -373,6 +357,5 @@ Add cases under `TestFastpath` in `tests/test_agent.py`, or exercise manually wi
 | `MEERA_RETRIEVAL_TOOL_THRESHOLD` | `0.75` | Minimum cosine score for tool hits |
 | `MEERA_RETRIEVAL_RAG_THRESHOLD` | `0.6` | Minimum cosine score for RAG hits |
 | `MEERA_RETRIEVAL_TOOL_MARGIN` | `0.01` | Score advantage tools need over RAG to trigger tool mode |
-| `MEERA_BACKEND` | `llamacpp` | Backend: `llamacpp` or `ollama` |
 | `MEERA_LLAMACPP_URL` | `http://127.0.0.1:8080` | Chat server URL |
 | `MEERA_EMBED_URL` | `http://127.0.0.1:8081` | Embedding server URL |
