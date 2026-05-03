@@ -248,7 +248,26 @@ _START_ARG_RE = re.compile(
 )
 
 
-def _ics_dtstart_value_from_start_arg(start: str) -> str | ToolResult:
+def _local_iana_tzid() -> str:
+    """Best-effort IANA zone name for the system local timezone (e.g. America/Los_Angeles)."""
+    tz = datetime.now().astimezone().tzinfo
+    key = getattr(tz, "key", None) if tz is not None else None
+    if key:
+        return str(key)
+    tz_env = (os.environ.get("TZ") or "").strip()
+    if tz_env:
+        return tz_env
+    try:
+        lp = Path("/etc/localtime").resolve()
+        for i, part in enumerate(lp.parts):
+            if part == "zoneinfo" and i + 1 < len(lp.parts):
+                return "/".join(lp.parts[i + 1 :])
+    except (OSError, ValueError):
+        pass
+    return "UTC"
+
+
+def _ics_dtstart_compact_from_start_arg(start: str) -> str | ToolResult:
     s = start.strip()
     if not s:
         return tool_result_err(
@@ -262,18 +281,18 @@ def _ics_dtstart_value_from_start_arg(start: str) -> str | ToolResult:
             "VALIDATION_ERROR",
         )
     y, mo, d, h, mi, se = m.groups()
-    return f"{y}{mo}{d}T{h}{mi}{se}Z"
+    return f"{y}{mo}{d}T{h}{mi}{se}"
 
 
 def _build_vevent_ics_document(
     summary: str,
-    dtstart_value: str,
+    dtstart_compact: str,
+    dtstart_tzid: str,
     duration_minutes: int,
 ) -> str:
-    """Return a minimal VEVENT ICS (CRLF). dtstart_value is the full DTSTART payload (…Z)."""
+    """Return a minimal VEVENT ICS (CRLF). Local wall time + TZID (not UTC Z) for GNOME import."""
     uid = f"{uuid.uuid4()}@meera"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dtstart = dtstart_value
     dur = _duration_to_ics(duration_minutes)
     summ = _ics_text_escape(summary.strip())
     lines = [
@@ -285,7 +304,7 @@ def _build_vevent_ics_document(
         f"UID:{uid}",
         f"DTSTAMP:{stamp}",
         f"SUMMARY:{summ}",
-        f"DTSTART:{dtstart}",
+        f"DTSTART;TZID={dtstart_tzid}:{dtstart_compact}",
         f"DURATION:{dur}",
         "END:VEVENT",
         "END:VCALENDAR",
@@ -314,11 +333,13 @@ def _gnome_calendar_event_add(params: Mapping[str, Any]) -> ToolResult:
             "VALIDATION_ERROR",
         )
 
-    dtstart_value = _ics_dtstart_value_from_start_arg(start_raw)
-    if isinstance(dtstart_value, ToolResult):
-        return dtstart_value
+    dtstart_compact = _ics_dtstart_compact_from_start_arg(start_raw)
+    if isinstance(dtstart_compact, ToolResult):
+        return dtstart_compact
 
-    ics_body = _build_vevent_ics_document(text, dtstart_value, duration_minutes)
+    ics_body = _build_vevent_ics_document(
+        text, dtstart_compact, _local_iana_tzid(), duration_minutes
+    )
     if os.environ.get("MEERA_DEBUG_RETRIEVAL", "").strip().lower() in ("1", "true", "yes", "on"):
         print(f"[retrieval] calendar ics (exact file content passed to gio open):\n{ics_body}", file=sys.stderr, flush=True)
     ics_bytes = ics_body.encode("utf-8")
@@ -452,7 +473,8 @@ TOOLS: list[ToolSpec] = [
             "Add or schedule a calendar event (meeting, appointment, lunch, etc.) for GNOME "
             "Calendar by writing a temporary .ics file and opening it with gio so the user can "
             "import the event into the Evolution/GNOME Calendar pipeline. The start string's "
-            "date and time digits are written to the .ics DTSTART as-is (compact form with Z)."
+            "date and time digits are written to DTSTART with the system local IANA timezone "
+            "(no UTC Z suffix) so the event appears at that wall-clock time in the calendar."
         ),
         parameters=[
             ToolParam(
