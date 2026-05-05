@@ -1407,7 +1407,7 @@ class MeeraWindow(Gtk.Window):
         window.set_title("Check for Updates")
         window.set_modal(True)
         window.set_transient_for(self)
-        window.set_default_size(460, 140)
+        window.set_default_size(460, 100)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         vbox.set_margin_top(20)
@@ -1472,7 +1472,7 @@ class MeeraWindow(Gtk.Window):
         progress_window.set_title("Installing Update")
         progress_window.set_modal(True)
         progress_window.set_transient_for(self)
-        progress_window.set_default_size(460, 170)
+        progress_window.set_default_size(460, 100)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         vbox.set_margin_top(20)
@@ -1537,13 +1537,7 @@ class MeeraWindow(Gtk.Window):
     def _finish_update_success(self, progress_window: Gtk.Window, pulse_state: dict):
         pulse_state["active"] = False
         progress_window.close()
-        launcher = os.path.expanduser("~/.local/bin/meera")
-        subprocess.Popen(
-            [launcher, "run"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.close()
+        self._show_update_complete_popup()
         return False
 
     def _finish_update_failure(self, progress_window: Gtk.Window, pulse_state: dict, message: str):
@@ -1551,6 +1545,41 @@ class MeeraWindow(Gtk.Window):
         progress_window.close()
         self._show_update_error_popup(message)
         return False
+
+    def _show_update_complete_popup(self):
+        window = Gtk.Window()
+        window.set_title("Update Complete")
+        window.set_modal(True)
+        window.set_transient_for(self)
+        window.set_default_size(500, 140)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        window.set_child(vbox)
+
+        message = Gtk.Label(
+            label="Update complete, please Quit Meera and re-launch it to launch the new version"
+        )
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        later_button = Gtk.Button(label="I'll do it later")
+        later_button.connect("clicked", lambda _btn: window.close())
+        button_box.append(later_button)
+
+        quit_button = Gtk.Button(label="Quit Meera")
+        quit_button.add_css_class("destructive-action")
+        quit_button.connect("clicked", lambda _btn: (window.close(), self._on_quit_clicked()))
+        button_box.append(quit_button)
+        window.present()
 
     def _on_quit_clicked(self, button=None):
         """Confirm quit, then stop local model servers and close Meera."""
