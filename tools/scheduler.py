@@ -532,10 +532,9 @@ TOOLS: list[ToolSpec] = [
             "set a reminder at 12:30 am to sleep",
             "remind me tomorrow at 8am to take medicine",
             "set reminder for Friday 6:15 pm to submit report",
-            "remind me at 2026-05-05T00:30:00 to sleep",
             "create a reminder for tonight at 11:45 to lock the door",
             "set an alarm reminder at 7 in the morning",
-            "schedule reminder for next monday at 9:00 to call team",
+            "schedule reminder for next monday at 9 am to call team",
         ],
     ),
     ToolSpec(
