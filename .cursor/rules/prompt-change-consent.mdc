@@ -54,3 +54,6 @@ Hard requirements:
 - If approval is missing, ambiguous, implied, or partial, do not edit files.
 - Repeat this confirmation process for every new requested change.
 - If scope changes during implementation, pause and request new approval before continuing.
+- Only make the minimum set of changes required to satisfy the confirmed request.
+- Do not add opportunistic, "nice-to-have," refactor, cleanup, defensive, or stylistic changes unless the user explicitly asks for them.
+- If any additional change is proposed beyond the confirmed scope, ask for explicit permission first and wait for clear approval.

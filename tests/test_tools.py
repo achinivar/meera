@@ -131,6 +131,28 @@ class TestGnomeCalendarIcs(unittest.TestCase):
         self.assertEqual(v, "20260502T090000")
 
 
+class TestReminderToolSpecs(unittest.TestCase):
+    def test_delay_and_time_reminder_tools_exist(self) -> None:
+        delay = get_tool("reminder_set_delay")
+        at_time = get_tool("reminder_set_time")
+        self.assertIsNotNone(delay)
+        self.assertIsNotNone(at_time)
+
+    def test_delay_reminder_parameters(self) -> None:
+        spec = get_tool("reminder_set_delay")
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        names = [p.name for p in spec.parameters]
+        self.assertEqual(names, ["message", "delay_minutes", "unit_id"])
+
+    def test_time_reminder_parameters(self) -> None:
+        spec = get_tool("reminder_set_time")
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        names = [p.name for p in spec.parameters]
+        self.assertEqual(names, ["message", "start", "unit_id"])
+
+
 class TestGnomeTitlebarLayout(unittest.TestCase):
     """Parsing for gnome_titlebar_button_layout_set (no gsettings I/O)."""
 

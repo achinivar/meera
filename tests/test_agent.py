@@ -240,10 +240,11 @@ class TestSystemPrompt(unittest.TestCase):
         s = build_agent_system_prompt(rag_hits=None, distro="fedora", base_identity="You are Meera.")
         self.assertIn("You are Meera.", s)
         self.assertIn("Host distro: fedora.", s)
-        self.assertIn("Current local date:", s)
-        self.assertIn("time:", s)
+        self.assertNotIn("Current local date:", s)
+        self.assertNotIn("time:", s)
         self.assertNotIn("UTC offset", s)
         self.assertNotIn("<KNOWLEDGE", s)
+        self.assertIn("You have a small set of local tools that can read or change this machine.", s)
 
     def test_prompt_inlines_rag_blocks(self) -> None:
         hits = [
@@ -255,6 +256,15 @@ class TestSystemPrompt(unittest.TestCase):
         self.assertIn("rg -n pattern path/", s)
         self.assertIn("<KNOWLEDGE doc=\"rag_data/find_basics.md\" section=\"Find by name\">", s)
         self.assertIn(DEFAULT_BASE_IDENTITY.split("\n", 1)[0][:20], s)
+
+    def test_prompt_includes_clock_for_scheduling_tools(self) -> None:
+        s = build_agent_system_prompt(
+            rag_hits=None,
+            distro="ubuntu",
+            candidate_tools=["reminder_set_time"],
+        )
+        self.assertIn("Current local date:", s)
+        self.assertIn("time:", s)
 
 
 class TestToolMemoryFormatting(unittest.TestCase):
