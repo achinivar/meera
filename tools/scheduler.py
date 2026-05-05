@@ -73,24 +73,25 @@ def _daemon_reload() -> ToolResult | None:
     return None
 
 
-def _tool_reminder_set(params: Mapping[str, Any]) -> ToolResult:
-    _ = params["distro"]
-    message: str = params["message"]
-    delay_minutes: int = params["delay_minutes"]
-    unit_id: str = params.get("unit_id") or _next_unit_id()
+_REMINDER_START_ARG_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
-    if delay_minutes < 1 or delay_minutes > 10080:
-        return tool_result_err(
-            "delay_minutes must be between 1 and 10080",
-            "INVALID_VALUE",
-        )
 
+def _validate_unit_id(unit_id: str) -> ToolResult | None:
     for ch in unit_id:
         if ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._":
             return tool_result_err(
                 "unit_id contains invalid characters",
                 "INVALID_VALUE",
             )
+    return None
+
+
+def _schedule_reminder(message: str, unit_id: str, calendar_str: str) -> ToolResult:
+    id_err = _validate_unit_id(unit_id)
+    if id_err is not None:
+        return id_err
 
     timer_path = _SYSTEMD_USER / f"{unit_id}.timer"
     if timer_path.exists():
@@ -98,9 +99,6 @@ def _tool_reminder_set(params: Mapping[str, Any]) -> ToolResult:
             f"Timer {unit_id} already exists",
             "ALREADY_EXISTS",
         )
-
-    target_time = datetime.now() + timedelta(minutes=delay_minutes)
-    calendar_str = target_time.strftime("%Y-%m-%d %H:%M:00")
 
     description = message.replace("\n", " ")[:100]
 
@@ -172,11 +170,67 @@ def _tool_reminder_set(params: Mapping[str, Any]) -> ToolResult:
 
     return tool_result_ok(
         f"Reminder set: {unit_id}",
-        data={
-            "unit_id": unit_id,
-            "target_time": calendar_str,
-            "delay_minutes": delay_minutes,
-        },
+        data={"unit_id": unit_id, "target_time": calendar_str},
+    )
+
+
+def _tool_reminder_set_delay(params: Mapping[str, Any]) -> ToolResult:
+    _ = params["distro"]
+    message: str = params["message"]
+    delay_minutes: int = params["delay_minutes"]
+    unit_id: str = params.get("unit_id") or _next_unit_id()
+
+    if delay_minutes < 1 or delay_minutes > 10080:
+        return tool_result_err(
+            "delay_minutes must be between 1 and 10080",
+            "INVALID_VALUE",
+        )
+
+    target_time = datetime.now() + timedelta(minutes=delay_minutes)
+    calendar_str = target_time.strftime("%Y-%m-%d %H:%M:00")
+    result = _schedule_reminder(message, unit_id, calendar_str)
+    if not result.ok:
+        return result
+
+    data = dict(result.data or {})
+    data["delay_minutes"] = delay_minutes
+    return tool_result_ok(
+        result.message,
+        data=data,
+    )
+
+
+def _tool_reminder_set_time(params: Mapping[str, Any]) -> ToolResult:
+    _ = params["distro"]
+    message: str = params["message"]
+    start_raw: str = params["start"]
+    unit_id: str = params.get("unit_id") or _next_unit_id()
+
+    start = start_raw.strip()
+    if not start:
+        return tool_result_err(
+            "start must be a non-empty datetime like 2026-05-05T00:30:00",
+            "VALIDATION_ERROR",
+        )
+
+    m = _REMINDER_START_ARG_RE.match(start)
+    if not m:
+        return tool_result_err(
+            "start must look like 2026-05-05T00:30:00 or 2026-05-05 00:30:00",
+            "VALIDATION_ERROR",
+        )
+    y, mo, d, h, mi, se = m.groups()
+    sec = se or "00"
+    calendar_str = f"{y}-{mo}-{d} {h}:{mi}:{sec}"
+    result = _schedule_reminder(message, unit_id, calendar_str)
+    if not result.ok:
+        return result
+
+    data = dict(result.data or {})
+    data["start"] = start
+    return tool_result_ok(
+        result.message,
+        data=data,
     )
 
 
@@ -410,8 +464,8 @@ TOOLS: list[ToolSpec] = [
         ],
     ),
     ToolSpec(
-        name="reminder_set",
-        description="Set a one-shot reminder that fires a desktop notification after the given delay. The timer auto-cleans after firing.",
+        name="reminder_set_delay",
+        description="Set a one-shot reminder that fires a desktop notification after a delay in minutes. The timer auto-cleans after firing.",
         parameters=[
             ToolParam(
                 name="message",
@@ -433,7 +487,7 @@ TOOLS: list[ToolSpec] = [
                 default=None,
             ),
         ],
-        handler=_tool_reminder_set,
+        handler=_tool_reminder_set_delay,
         read_only=False,
         exemplars=[
             "remind me in 30 minutes to call mom",
@@ -443,6 +497,45 @@ TOOLS: list[ToolSpec] = [
             "set a 10 minute timer to check the oven",
             "ping me in 2 hours",
             "wake me up in 45 minutes",
+        ],
+    ),
+    ToolSpec(
+        name="reminder_set_time",
+        description="Set a one-shot reminder at a specific local date/time. Use this for requests like 'at 12:30 am' or 'tomorrow at 8'.",
+        parameters=[
+            ToolParam(
+                name="message",
+                param_type="string",
+                required=True,
+                description="The reminder text to show in the notification.",
+            ),
+            ToolParam(
+                name="start",
+                param_type="string",
+                required=True,
+                description=(
+                    "Reminder start: YYYY-MM-DDTHH:MM:SS (or space instead of T), "
+                    "optional Z or ±HH:MM offset."
+                ),
+            ),
+            ToolParam(
+                name="unit_id",
+                param_type="string",
+                required=False,
+                description="Optional unique identifier. Auto-generated if not provided.",
+                default=None,
+            ),
+        ],
+        handler=_tool_reminder_set_time,
+        read_only=False,
+        exemplars=[
+            "set a reminder at 12:30 am to sleep",
+            "remind me tomorrow at 8am to take medicine",
+            "set reminder for Friday 6:15 pm to submit report",
+            "remind me at 2026-05-05T00:30:00 to sleep",
+            "create a reminder for tonight at 11:45 to lock the door",
+            "set an alarm reminder at 7 in the morning",
+            "schedule reminder for next monday at 9:00 to call team",
         ],
     ),
     ToolSpec(

@@ -322,6 +322,15 @@ def _local_clock_context_for_prompt() -> str:
     )
 
 
+_CLOCK_CONTEXT_TOOLS = {"reminder_set_delay", "reminder_set_time", "gnome_calendar_event_add"}
+
+
+def _needs_clock_context(candidate_tools: list[str] | None) -> bool:
+    if not candidate_tools:
+        return False
+    return any(name in _CLOCK_CONTEXT_TOOLS for name in candidate_tools)
+
+
 def _debug_log_model_tool_calls(phase: str, tool_calls: list[dict[str, Any]]) -> None:
     """Log raw assistant tool_calls from the LLM when MEERA_DEBUG_RETRIEVAL is on."""
     if not _debug_retrieval_enabled() or not tool_calls:
@@ -357,16 +366,17 @@ def build_agent_system_prompt(
     rag_hits: list[IndexHit] | None,
     distro: str,
     base_identity: str = DEFAULT_BASE_IDENTITY,
+    candidate_tools: list[str] | None = None,
 ) -> str:
     """Compose the per-turn system prompt for the agent.
 
-    Includes identity, behaviour guidance, distro hint, current local clock
-    (for scheduling tools), and (when present) inlined <KNOWLEDGE> blocks for
-    retrieved RAG chunks.
+    Includes identity, behaviour guidance, distro hint, optional current local
+    clock for scheduling tools, and (when present) inlined <KNOWLEDGE> blocks
+    for retrieved RAG chunks.
     """
     rag_block = _format_rag_block(rag_hits or [])
-    clock = _local_clock_context_for_prompt()
-    if _debug_retrieval_enabled():
+    clock = _local_clock_context_for_prompt() if _needs_clock_context(candidate_tools) else ""
+    if clock and _debug_retrieval_enabled():
         print(
             f"[retrieval] system_prompt clock (in model system message): {clock}",
             file=sys.stderr,
@@ -375,8 +385,7 @@ def build_agent_system_prompt(
     return (
         f"{base_identity.strip()}\n\n"
         "You have a small set of local tools that can read or change this "
-        "machine (files under home, processes, audio, brightness, networking, "
-        "reminders, screenshots, weather). Call a tool whenever the user is "
+        "machine. Call a tool whenever the user is "
         "asking for something one of the provided tools can do; otherwise "
         "reply directly in plain language.\n\n"
         "Never claim you ran, executed, set, changed, or applied anything "
@@ -652,7 +661,12 @@ def _run_llm_tools_turn(
         "rag": rag_summary,
     }
 
-    sys_prompt = build_agent_system_prompt(plan.rag_hits, distro=distro, base_identity=base_identity)
+    sys_prompt = build_agent_system_prompt(
+        plan.rag_hits,
+        distro=distro,
+        base_identity=base_identity,
+        candidate_tools=plan.candidate_tools,
+    )
     msgs: list[dict[str, Any]] = [
         _system_message(sys_prompt),
         *history,
