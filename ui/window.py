@@ -1172,6 +1172,11 @@ class MeeraWindow(Gtk.Window):
         desc_label.set_margin_top(10)
         vbox.append(desc_label)
 
+        version = self._read_local_version() or "unknown"
+        version_label = Gtk.Label(label=f"Version: {version}")
+        version_label.set_margin_top(4)
+        vbox.append(version_label)
+
         # Website button
         website_button = Gtk.LinkButton(uri="https://github.com/achinivar/meera", label="Website")
         website_button.set_margin_top(20)
