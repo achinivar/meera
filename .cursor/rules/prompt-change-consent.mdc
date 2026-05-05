@@ -3,7 +3,7 @@ description: Require exact prompt diff and explicit user consent before any prom
 alwaysApply: true
 ---
 
-# Prompt + Code Change Consent (Strict)
+# Prompt Change Consent (Strict)
 
 This project uses a highly prompt-sensitive 2B model.
 
@@ -34,26 +34,3 @@ Absolute prohibition:
 - Cursor is forbidden from changing prompt text without first showing exact before/after prompts and receiving explicit consent.
 - This prohibition applies even when the user asks to "improve", "tune", "fix", or "modify" prompts until exact before/after text is shown and approved.
 
-# Code Change Consent (Strict)
-
-The codebase is now mature. Any code modification requires explicit user confirmation before edits are made.
-
-- Never modify code files without explicit user approval.
-- Never infer that discussion, troubleshooting, or intent exploration is approval to edit code.
-- Never "just make a quick fix" without confirming first.
-
-Before any code change, Cursor must:
-
-1. Restate the user's requested change in clear, concise terms.
-2. Ask a brief clarification question if intent is ambiguous.
-3. Propose the exact change plan (files/components and what will be changed).
-4. Ask for explicit approval and wait for a clear confirmation before applying edits.
-
-Hard requirements:
-
-- If approval is missing, ambiguous, implied, or partial, do not edit files.
-- Repeat this confirmation process for every new requested change.
-- If scope changes during implementation, pause and request new approval before continuing.
-- Only make the minimum set of changes required to satisfy the confirmed request.
-- Do not add opportunistic, "nice-to-have," refactor, cleanup, defensive, or stylistic changes unless the user explicitly asks for them.
-- If any additional change is proposed beyond the confirmed scope, ask for explicit permission first and wait for clear approval.
