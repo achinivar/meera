@@ -3,6 +3,8 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 import gi  # type: ignore
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -147,6 +149,14 @@ class MeeraWindow(Gtk.Window):
         )
         shortcut_item.set_halign(Gtk.Align.FILL)
         menu_box.append(shortcut_item)
+
+        check_updates_item = Gtk.Button(label="Check for Updates")
+        check_updates_item.connect(
+            "clicked",
+            lambda btn: (popover.popdown(), self._on_check_updates_clicked()),
+        )
+        check_updates_item.set_halign(Gtk.Align.FILL)
+        menu_box.append(check_updates_item)
         
         # Separator
         separator = Gtk.Separator()
@@ -1158,7 +1168,7 @@ class MeeraWindow(Gtk.Window):
         vbox.append(title_label)
 
         # Description
-        desc_label = Gtk.Label(label="AI companion for Linux desktops")
+        desc_label = Gtk.Label(label="AI companion for Linux Gnome desktops")
         desc_label.set_margin_top(10)
         vbox.append(desc_label)
 
@@ -1304,6 +1314,238 @@ class MeeraWindow(Gtk.Window):
         key_controller.connect("key-pressed", on_key_pressed)
         shortcut_window.add_controller(key_controller)
         shortcut_window.present()
+
+    def _launcher_config_path(self) -> str:
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return os.path.join(xdg_config_home, "meera", "launcher.env")
+
+    def _normalize_version_tag(self, value: str) -> str:
+        return str(value or "").strip().lstrip("vV")
+
+    def _read_local_version(self) -> str:
+        path = self._launcher_config_path()
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    if key.strip() != "MEERA_VERSION":
+                        continue
+                    return value.strip().strip('"').strip("'")
+        except OSError:
+            return ""
+        return ""
+
+    def _fetch_latest_release_tag(self) -> str:
+        url = "https://api.github.com/repos/achinivar/meera/releases/latest"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "Meera updater",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return str(payload.get("tag_name") or "").strip()
+
+    def _is_update_available(self, local_version: str, remote_version: str) -> bool:
+        local_norm = self._normalize_version_tag(local_version)
+        remote_norm = self._normalize_version_tag(remote_version)
+        return bool(local_norm and remote_norm and local_norm != remote_norm)
+
+    def _on_check_updates_clicked(self, button=None):
+        local_version = self._read_local_version()
+        try:
+            latest_tag = self._fetch_latest_release_tag()
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+            self._show_update_error_popup(f"Could not check for updates: {exc}")
+            return
+
+        if not self._is_update_available(local_version, latest_tag):
+            self._show_no_update_popup()
+            return
+        self._show_update_available_popup(latest_tag)
+
+    def _show_no_update_popup(self):
+        window = Gtk.Window()
+        window.set_title("Check for Updates")
+        window.set_modal(True)
+        window.set_transient_for(self)
+        window.set_default_size(420, 120)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        window.set_child(vbox)
+
+        message = Gtk.Label(label="Meera is already up-to date")
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        close_button = Gtk.Button(label="Close")
+        close_button.connect("clicked", lambda _btn: window.close())
+        button_box.append(close_button)
+        window.present()
+
+    def _show_update_available_popup(self, latest_tag: str):
+        window = Gtk.Window()
+        window.set_title("Check for Updates")
+        window.set_modal(True)
+        window.set_transient_for(self)
+        window.set_default_size(460, 140)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        window.set_child(vbox)
+
+        message = Gtk.Label(
+            label=f"There's an update available ({latest_tag}), would you like to install it?"
+        )
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        no_button = Gtk.Button(label="No")
+        no_button.connect("clicked", lambda _btn: window.close())
+        button_box.append(no_button)
+
+        yes_button = Gtk.Button(label="Yes")
+        yes_button.connect(
+            "clicked",
+            lambda _btn: (window.close(), self._start_update_install_flow()),
+        )
+        button_box.append(yes_button)
+        window.present()
+
+    def _show_update_error_popup(self, error_text: str):
+        window = Gtk.Window()
+        window.set_title("Update Failed")
+        window.set_modal(True)
+        window.set_transient_for(self)
+        window.set_default_size(460, 180)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        window.set_child(vbox)
+
+        message = Gtk.Label(label=error_text)
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        vbox.append(button_box)
+
+        close_button = Gtk.Button(label="Close")
+        close_button.connect("clicked", lambda _btn: window.close())
+        button_box.append(close_button)
+        window.present()
+
+    def _start_update_install_flow(self):
+        progress_window = Gtk.Window()
+        progress_window.set_title("Installing Update")
+        progress_window.set_modal(True)
+        progress_window.set_transient_for(self)
+        progress_window.set_default_size(460, 170)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        progress_window.set_child(vbox)
+
+        message = Gtk.Label(label="Installing update. Please wait...")
+        message.set_wrap(True)
+        message.set_xalign(0)
+        vbox.append(message)
+
+        progress = Gtk.ProgressBar()
+        progress.set_show_text(True)
+        progress.set_text("Installing update...")
+        progress.pulse()
+        vbox.append(progress)
+
+        pulse_state = {"active": True}
+
+        def pulse_tick():
+            if not pulse_state["active"]:
+                return False
+            progress.pulse()
+            return True
+
+        GLib.timeout_add(120, pulse_tick)
+        progress_window.present()
+
+        def worker():
+            launcher = os.path.expanduser("~/.local/bin/meera")
+            try:
+                self._stop_installed_model_servers()
+                result = subprocess.run(
+                    [launcher, "update"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    output = (result.stderr or result.stdout or "Unknown update error").strip()
+                    GLib.idle_add(
+                        self._finish_update_failure,
+                        progress_window,
+                        pulse_state,
+                        f"Update failed: {output}",
+                    )
+                    return
+
+                GLib.idle_add(self._finish_update_success, progress_window, pulse_state)
+            except Exception as exc:
+                GLib.idle_add(
+                    self._finish_update_failure,
+                    progress_window,
+                    pulse_state,
+                    f"Update failed: {exc}",
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_update_success(self, progress_window: Gtk.Window, pulse_state: dict):
+        pulse_state["active"] = False
+        progress_window.close()
+        launcher = os.path.expanduser("~/.local/bin/meera")
+        subprocess.Popen(
+            [launcher, "run"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.close()
+        return False
+
+    def _finish_update_failure(self, progress_window: Gtk.Window, pulse_state: dict, message: str):
+        pulse_state["active"] = False
+        progress_window.close()
+        self._show_update_error_popup(message)
+        return False
 
     def _on_quit_clicked(self, button=None):
         """Confirm quit, then stop local model servers and close Meera."""
