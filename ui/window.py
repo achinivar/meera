@@ -71,6 +71,7 @@ class MeeraWindow(Gtk.Window):
         
         # Conversation history for context
         self.conversation_history = []
+        self.current_session_filepath = None
         self._streaming_message_active = False
         self._streaming_body_start_mark = None
         self._streaming_render_buffer = ""
@@ -992,7 +993,13 @@ class MeeraWindow(Gtk.Window):
 
     def _on_new_chat_clicked(self, button=None):
         """Start a new chat session"""
+        if self.conversation_history:
+            self.current_session_filepath = save_session(
+                self.conversation_history,
+                self.current_session_filepath,
+            )
         self.conversation_history = []
+        self.current_session_filepath = None
         self.chat_buf.set_text("")
         self._initial_greeting()
 
@@ -1101,6 +1108,11 @@ class MeeraWindow(Gtk.Window):
         """Load a session into the current conversation"""
         messages = load_session(filepath)
         if messages:
+            if self.conversation_history:
+                self.current_session_filepath = save_session(
+                    self.conversation_history,
+                    self.current_session_filepath,
+                )
             # Drop legacy synthetic tool-result rows (no longer stored in new sessions)
             self.conversation_history = [
                 m
@@ -1110,6 +1122,7 @@ class MeeraWindow(Gtk.Window):
                     and str(m.get("content") or "").startswith(TOOL_FEEDBACK_PREFIX)
                 )
             ]
+            self.current_session_filepath = filepath
             # Clear chat view
             self.chat_buf.set_text("")
 
@@ -1622,7 +1635,10 @@ class MeeraWindow(Gtk.Window):
         confirm_window.close()
         self.cancel_stream = True
         if self.conversation_history:
-            save_session(self.conversation_history)
+            self.current_session_filepath = save_session(
+                self.conversation_history,
+                self.current_session_filepath,
+            )
         self._stop_installed_model_servers()
         self.close()
 
@@ -1647,6 +1663,9 @@ class MeeraWindow(Gtk.Window):
     def _on_window_close(self, window):
         """Handle window close event - save conversation history"""
         if self.conversation_history:
-            save_session(self.conversation_history)
+            self.current_session_filepath = save_session(
+                self.conversation_history,
+                self.current_session_filepath,
+            )
         return False  # Allow window to close normally
 

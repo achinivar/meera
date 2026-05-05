@@ -14,12 +14,13 @@ def get_history_dir():
     os.makedirs(history_dir, exist_ok=True)
     return history_dir
 
-def save_session(conversation_history):
+def save_session(conversation_history, filepath=None):
     """
     Save a conversation session to disk.
     
     Args:
         conversation_history: List of message dicts with 'role' and 'content'
+        filepath: Optional existing session filepath to overwrite
     
     Returns:
         Path to the saved session file
@@ -29,18 +30,19 @@ def save_session(conversation_history):
         return None
     
     history_dir = get_history_dir()
-    
-    # Create session data with timestamp
+
+    # Always refresh timestamp so updated sessions sort to the top.
     timestamp = datetime.now().isoformat()
     session_data = {
         "timestamp": timestamp,
         "messages": conversation_history
     }
-    
-    # Generate filename from timestamp (sanitized)
-    filename = timestamp.replace(":", "-").replace(".", "-") + ".json"
-    filepath = os.path.join(history_dir, filename)
-    
+
+    if not filepath:
+        # Generate filename from timestamp (sanitized)
+        filename = timestamp.replace(":", "-").replace(".", "-") + ".json"
+        filepath = os.path.join(history_dir, filename)
+
     # Save session
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(session_data, f, indent=2, ensure_ascii=False)
