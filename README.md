@@ -2,11 +2,9 @@
 
 Meera is a local-first AI assistant for Linux GNOME desktops. It lets you control your system, manage files, and get Linux help — all through a native chat UI, with a lightweight model running entirely offline on your machine.
 
-![Demo](./assets/office_n_dark.gif)
-
 <div align="center">
 
-<img src="./assets/meera_bg.png" alt="Meera desktop assistant" width="520">
+![Demo](./assets/office_n_dark.gif)
 
 </div>
 
